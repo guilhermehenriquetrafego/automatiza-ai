@@ -1,54 +1,9 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { api } from '@/lib/api'
-import { Radio, Activity, Clock, CheckCircle2, AlertCircle, Loader2, Zap, Calendar, Cpu, Wifi, Monitor, Play, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { api, type CdpSession, type CdpActivity, type ScheduledAction, type OlxAccount } from '@/lib/api'
+import { Activity, Clock, CheckCircle2, AlertCircle, Loader2, Zap, Calendar, Cpu, Wifi, Monitor, Play, RefreshCw, KeyRound, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://automatiza-ai-api.onrender.com/api/v1'
-
-interface CdpStep {
-  timestamp: string
-  action: string
-  status: 'pending' | 'running' | 'success' | 'error'
-  message: string
-}
-
-interface CdpSession {
-  id: string
-  account_email: string
-  status: string
-  current_action: string
-  started_at: string
-  last_updated: string
-  steps: CdpStep[]
-  olx_ad_url: string | null
-}
-
-interface CdpActivity {
-  timestamp: string
-  session_id: string
-  account_email: string
-  action: string
-  status: string
-  message: string
-}
-
-interface ScheduledAction {
-  id: string
-  scheduled_time: string
-  account_email: string
-  product_title: string
-  action_type: string
-  variation_title: string | null
-}
-
-interface OlxAccount {
-  id: string
-  email: string
-  account_type: string
-  is_authenticated: boolean
-}
 
 export default function CdpLivePage() {
   const [sessions, setSessions] = useState<CdpSession[]>([])
@@ -58,19 +13,17 @@ export default function CdpLivePage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'live' | 'scheduled' | 'history'>('live')
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [showPasswordModal, setShowPasswordModal] = useState<string | null>(null)
+  const [olxPassword, setOlxPassword] = useState('')
 
   useEffect(() => {
     const fetchData = async () => {
-      const token = localStorage.getItem('token')
-      if (!token) return
-      const headers = { Authorization: `Bearer ${token}` }
-
       try {
         const [sessRes, actRes, schRes, accRes] = await Promise.all([
-          fetch(`${API_URL}/cdp-live/sessions`, { headers }).then(r => r.ok ? r.json() : []),
-          fetch(`${API_URL}/cdp-live/activity`, { headers }).then(r => r.ok ? r.json() : []),
-          fetch(`${API_URL}/cdp-live/schedule`, { headers }).then(r => r.ok ? r.json() : []),
-          fetch(`${API_URL}/accounts`, { headers }).then(r => r.ok ? r.json() : []),
+          api.getCdpSessions().catch(() => []),
+          api.getCdpActivity().catch(() => []),
+          api.getCdpSchedule().catch(() => []),
+          api.getAccounts().catch(() => []),
         ])
         setSessions(sessRes)
         setActivity(actRes)
@@ -85,23 +38,34 @@ export default function CdpLivePage() {
     return () => clearInterval(interval)
   }, [])
 
-  const triggerAction = async (accountId: string, action: string) => {
-    setActionLoading(`${accountId}-${action}`)
-    const token = localStorage.getItem('token')
+  const handleLogin = async (accountId: string) => {
+    setShowPasswordModal(accountId)
+    setOlxPassword('')
+  }
+
+  const confirmLogin = async () => {
+    if (!showPasswordModal || !olxPassword) return
+    const accountId = showPasswordModal
+    setActionLoading(`${accountId}-login`)
+    setShowPasswordModal(null)
     try {
-      const res = await fetch(`${API_URL}/cdp-live/trigger`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ account_id: accountId, action }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        toast.success(data.message || 'Ação iniciada')
-      } else {
-        toast.error(data.detail || 'Erro ao iniciar ação')
-      }
-    } catch {
-      toast.error('Erro de conexão')
+      const res = await api.triggerCdpAction({ account_id: accountId, action: 'login', password: olxPassword })
+      toast.success(res.message || 'Login CDP iniciado')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao iniciar login')
+    } finally {
+      setActionLoading(null)
+      setOlxPassword('')
+    }
+  }
+
+  const handleSync = async (accountId: string) => {
+    setActionLoading(`${accountId}-sync_limits`)
+    try {
+      const res = await api.triggerCdpAction({ account_id: accountId, action: 'sync_limits' })
+      toast.success(res.message || 'Sync iniciado')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao iniciar sync')
     } finally {
       setActionLoading(null)
     }
@@ -128,7 +92,7 @@ export default function CdpLivePage() {
         </div>
       </div>
 
-      {/* Quick stats */}
+      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="premium-card p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -160,12 +124,12 @@ export default function CdpLivePage() {
         </div>
       </div>
 
-      {/* Action buttons for each OLX account */}
+      {/* Action buttons */}
       {accounts.length > 0 && (
         <div className="premium-card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-              <Zap className="h-4.5 w-4.5 text-indigo-400" fill="currentColor" />
+              <Zap className="h-4 w-4 text-indigo-400" fill="currentColor" />
             </div>
             <div>
               <h2 className="text-sm font-semibold text-white">Disparar Ação CDP</h2>
@@ -187,7 +151,7 @@ export default function CdpLivePage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => triggerAction(acc.id, 'login')}
+                  onClick={() => handleLogin(acc.id)}
                   disabled={actionLoading === `${acc.id}-login`}
                   className="btn-ghost text-xs py-1.5 px-3"
                 >
@@ -195,7 +159,7 @@ export default function CdpLivePage() {
                   Login
                 </button>
                 <button
-                  onClick={() => triggerAction(acc.id, 'sync_limits')}
+                  onClick={() => handleSync(acc.id)}
                   disabled={actionLoading === `${acc.id}-sync_limits`}
                   className="btn-ghost text-xs py-1.5 px-3"
                 >
@@ -204,6 +168,38 @@ export default function CdpLivePage() {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Password modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPasswordModal(null)}>
+          <div className="premium-card p-6 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                <KeyRound className="h-5 w-5 text-indigo-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Senha da OLX</h3>
+                <p className="text-xs text-zinc-500">Digite a senha da conta OLX para login via CDP</p>
+              </div>
+            </div>
+            <input
+              type="password"
+              autoFocus
+              value={olxPassword}
+              onChange={e => setOlxPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmLogin()}
+              className="premium-input mb-4"
+              placeholder="Senha da conta OLX"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowPasswordModal(null)} className="btn-ghost flex-1 justify-center text-sm">Cancelar</button>
+              <button onClick={confirmLogin} disabled={!olxPassword} className="btn-accent flex-1 justify-center text-sm">
+                Iniciar Login
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -256,8 +252,6 @@ export default function CdpLivePage() {
                     {sess.status.replace('_', ' ')}
                   </span>
                 </div>
-
-                {/* Steps timeline */}
                 <div className="space-y-2 pl-2">
                   {sess.steps?.map((step, i) => (
                     <div key={i} className="flex items-start gap-3 text-sm slide-in">
@@ -275,7 +269,6 @@ export default function CdpLivePage() {
                     </div>
                   ))}
                 </div>
-
                 {sess.olx_ad_url && (
                   <a href={sess.olx_ad_url} target="_blank" className="mt-3 block text-xs text-indigo-400 hover:underline truncate">
                     {sess.olx_ad_url}

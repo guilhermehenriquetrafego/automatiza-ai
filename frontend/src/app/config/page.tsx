@@ -24,7 +24,7 @@ export default function ConfigPage() {
     e.preventDefault()
     setConnecting(true)
     try {
-      await api.addAccount({ email: form.email, password: form.password, account_type: 'free' })
+      await api.addAccount({ email: form.email, password: form.password })
       toast.success('Conta OLX adicionada! Conectando via CDP...')
       setShowForm(false)
       setForm({ email: '', password: '' })

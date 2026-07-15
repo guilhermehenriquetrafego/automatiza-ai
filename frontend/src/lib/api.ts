@@ -11,6 +11,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getToken()
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
+    redirect: 'follow',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -24,6 +25,11 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+// Helper for collection endpoints that need trailing slash
+async function fetchCollection<T>(path: string, options?: RequestInit): Promise<T> {
+  return fetchAPI<T>(path.endsWith('/') ? path : path + '/', options)
+}
+
 export const api = {
   // Dashboard
   getOverview: () => fetchAPI<Overview>('/dashboard/overview'),
@@ -31,23 +37,30 @@ export const api = {
   getCalendar: () => fetchAPI<CalendarEntry[]>('/dashboard/exposure-calendar'),
 
   // Products
-  getProducts: () => fetchAPI<Product[]>('/products'),
+  getProducts: () => fetchCollection<Product[]>('/products'),
   createProduct: (data: CreateProductReq) =>
-    fetchAPI<Product>('/products', { method: 'POST', body: JSON.stringify(data) }),
+    fetchCollection<Product>('/products', { method: 'POST', body: JSON.stringify(data) }),
   deleteProduct: (id: string) => fetchAPI(`/products/${id}`, { method: 'DELETE' }),
 
   // Accounts
-  getAccounts: () => fetchAPI<OlxAccount[]>('/accounts'),
-  addAccount: (data: { email: string; password: string; account_type: string }) =>
-    fetchAPI<OlxAccount>('/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  getAccounts: () => fetchCollection<OlxAccount[]>('/accounts'),
+  addAccount: (data: { email: string; password: string }) =>
+    fetchCollection<OlxAccount>('/accounts', { method: 'POST', body: JSON.stringify(data) }),
 
   // Publications
-  getPublications: () => fetchAPI<Publication[]>('/publications'),
+  getPublications: () => fetchCollection<Publication[]>('/publications'),
   recalculate: () => fetchAPI('/publications/recalculate', { method: 'POST' }),
 
   // Chat
   getChatMessages: () => fetchAPI<ChatMessage[]>('/chat/messages'),
   resolveMessage: (id: string) => fetchAPI(`/chat/${id}/resolve`, { method: 'PUT' }),
+
+  // CDP Live
+  getCdpSessions: () => fetchAPI<CdpSession[]>('/cdp-live/sessions'),
+  getCdpActivity: () => fetchAPI<CdpActivity[]>('/cdp-live/activity'),
+  getCdpSchedule: () => fetchAPI<ScheduledAction[]>('/cdp-live/schedule'),
+  triggerCdpAction: (data: { account_id: string; action: string; password?: string }) =>
+    fetchAPI<{ status: string; message: string }>('/cdp-live/trigger', { method: 'POST', body: JSON.stringify(data) }),
 
   // Auth
   login: (email: string, password: string) =>
@@ -146,5 +159,34 @@ export interface ChatMessage {
 
 export interface AuthResponse {
   token: string
-  user: { id: string; email: string; full_name: string; plan_tier: string }
+  user: { id: string; email: string; full_name: string; plan_tier: string; max_products?: number; max_olx_accounts?: number }
+}
+
+export interface CdpSession {
+  id: string
+  account_email: string
+  status: string
+  current_action: string
+  started_at: string
+  last_updated: string
+  steps: { timestamp: string; action: string; status: string; message: string }[]
+  olx_ad_url: string | null
+}
+
+export interface CdpActivity {
+  timestamp: string
+  session_id: string
+  account_email: string
+  action: string
+  status: string
+  message: string
+}
+
+export interface ScheduledAction {
+  id: string
+  scheduled_time: string
+  account_email: string
+  product_title: string
+  action_type: string
+  variation_title: string | null
 }

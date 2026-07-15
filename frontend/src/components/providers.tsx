@@ -1,20 +1,30 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import { AuthProvider } from '@/lib/auth-context'
 import Sidebar from '@/components/sidebar'
 import { Toaster } from 'sonner'
 
 export default function Providers({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const isAuthPage = pathname === '/login'
+
   return (
     <AuthProvider>
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <main className="flex-1 min-w-0">
-          <div className="max-w-7xl mx-auto p-6 md:p-8">
-            {children}
-          </div>
-        </main>
-      </div>
+      {isAuthPage ? (
+        <div className="min-h-screen">
+          {children}
+        </div>
+      ) : (
+        <div className="flex min-h-screen">
+          <Sidebar />
+          <main className="flex-1 min-w-0">
+            <div className="max-w-7xl mx-auto p-6 md:p-8">
+              {children}
+            </div>
+          </main>
+        </div>
+      )}
       <Toaster
         position="top-right"
         toastOptions={{
