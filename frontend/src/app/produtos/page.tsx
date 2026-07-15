@@ -6,7 +6,7 @@ import { Plus, Trash2, Package } from 'lucide-react'
 import { toast } from 'sonner'
 
 const CATEGORIES = [
-  { value: 'celulares_telefonia', label: 'Celulares e Telefonia' },
+  { value: 'celulares_e_telefonia', label: 'Celulares e Telefonia' },
   { value: 'informatica', label: 'Informática' },
   { value: 'games', label: 'Games' },
   { value: 'audio', label: 'Áudio' },
@@ -26,7 +26,7 @@ export default function ProdutosPage() {
   // Form state
   const [form, setForm] = useState({
     title: '', description: '', price: '', min_price: '',
-    category: 'celulares_telefonia', brand: '', model: '', condition: 'novo',
+    category: 'celulares_e_telefonia', brand: '', model: '', condition: 'novo',
   })
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export default function ProdutosPage() {
       })
       toast.success('Produto criado! Gerando variações com IA...')
       setShowForm(false)
-      setForm({ title: '', description: '', price: '', min_price: '', category: 'celulares_telefonia', brand: '', model: '', condition: 'novo' })
+      setForm({ title: '', description: '', price: '', min_price: '', category: 'celulares_e_telefonia', brand: '', model: '', condition: 'novo' })
       loadProducts()
     } catch { toast.error('Erro ao criar produto') }
   }
