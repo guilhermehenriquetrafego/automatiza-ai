@@ -1,6 +1,6 @@
 /** API client for AUTOMATIZA AI backend */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://automatiza-ai-api.onrender.com/api/v1'
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null

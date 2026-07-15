@@ -3,6 +3,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Sidebar } from '@/components/sidebar'
 import { Toaster } from 'sonner'
 import './globals.css'
+import { AuthProvider } from '@/lib/auth-context'
 
 export const metadata: Metadata = {
   title: 'AUTOMATIZA AI',
@@ -26,15 +27,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <main className="flex-1 overflow-x-hidden p-6 lg:p-8">
+          <AuthProvider>
+            <SidebarWrapper />
+            <main className="flex-1 overflow-x-hidden p-6 lg:p-8 lg:ml-64">
               {children}
             </main>
-          </div>
+          </AuthProvider>
           <Toaster position="top-right" richColors />
         </ThemeProvider>
       </body>
     </html>
   )
+}
+
+// Wrapper to include sidebar (it returns null on login page)
+function SidebarWrapper() {
+  return <Sidebar />
 }
