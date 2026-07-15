@@ -2,9 +2,10 @@
 
 import os
 import uuid
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from passlib.context import CryptContext
+import bcrypt
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -15,16 +16,24 @@ from app.core.config import get_settings
 from app.models import User, async_session
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash password using bcrypt. Truncate to 72 bytes (bcrypt limit)."""
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    """Verify password against bcrypt hash."""
+    try:
+        pwd_bytes = plain.encode("utf-8")[:72]
+        hashed_bytes = hashed.encode("utf-8")
+        return bcrypt.checkpw(pwd_bytes, hashed_bytes)
+    except Exception:
+        return False
 
 
 def create_token(user_id: uuid.UUID) -> str:
