@@ -562,8 +562,8 @@ class StealthBrowser:
             (() => {{
                 const el = document.querySelector({json.dumps(selector)});
                 if (el) {{
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
                     el.blur();
                 }}
             }})()
