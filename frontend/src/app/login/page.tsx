@@ -25,7 +25,7 @@ export default function LoginPage() {
           callback: handleGoogleResponse,
         })
         window.google.accounts.id.renderButton(googleBtnRef.current!, {
-          theme: 'outline', size: 'large', width: 400, text: 'continue_with', shape: 'rounded', locale: 'pt-BR',
+          theme: 'outline', size: 'large', width: '100%', text: 'continue_with', shape: 'rounded', locale: 'pt-BR',
         })
       } else {
         setTimeout(checkGoogle, 100)
@@ -78,8 +78,8 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4 relative overflow-hidden bg-[#0a0a0f]">
       {/* Ambient glow */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-indigo-500/8 blur-[120px]" />
-        <div className="absolute right-1/4 bottom-1/4 h-[300px] w-[300px] rounded-full bg-purple-500/5 blur-[100px]" />
+        <div className="absolute left-1/2 top-1/4 h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] -translate-x-1/2 rounded-full bg-indigo-500/8 blur-[120px]" />
+        <div className="absolute right-1/4 bottom-1/4 h-[200px] w-[200px] sm:h-[300px] sm:w-[300px] rounded-full bg-purple-500/5 blur-[100px]" />
       </div>
 
       {/* Grid pattern */}
@@ -91,15 +91,15 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-[420px]">
         {/* Logo */}
         <div className="mb-10 text-center">
-          <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 shadow-xl shadow-indigo-500/30">
-            <Zap className="h-7 w-7 text-white" fill="white" />
+          <div className="mb-4 inline-flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 shadow-xl shadow-indigo-500/30">
+            <Zap className="h-6 w-6 sm:h-7 sm:w-7 text-white" fill="white" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">AUTOMATIZA<span className="text-indigo-400"> AI</span></h1>
-          <p className="mt-2 text-sm text-zinc-500">Gestão inteligente de exposição de anúncios OLX</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">AUTOMATIZA<span className="text-indigo-400"> AI</span></h1>
+          <p className="mt-2 text-xs sm:text-sm text-zinc-500">Gestão inteligente de exposição de anúncios OLX</p>
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-zinc-800/80 bg-[#13131a]/80 backdrop-blur-xl p-8">
+        <div className="rounded-2xl border border-zinc-800/80 bg-[#13131a]/80 backdrop-blur-xl p-6 sm:p-8">
           {/* Mode toggle */}
           <div className="mb-6 flex gap-1 rounded-xl bg-zinc-900/60 p-1 border border-zinc-800/50">
             {(['login', 'register'] as const).map((m) => (
@@ -120,7 +120,7 @@ export default function LoginPage() {
           {/* Google button */}
           {GOOGLE_CLIENT_ID ? (
             <div className="mb-5">
-              <div ref={googleBtnRef} className="w-full flex justify-center" />
+              <div ref={googleBtnRef} className="w-full flex justify-center [&_iframe]:!w-full [&_div]:!w-full" />
               {googleLoading && (
                 <p className="mt-2 text-center text-xs text-zinc-500">Conectando com Google...</p>
               )}
@@ -140,7 +140,7 @@ export default function LoginPage() {
                 <input
                   type="text" required value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="premium-input"
+                  className="premium-input [touch-action:manipulation]"
                   placeholder="Como devemos te chamar?"
                 />
               </div>
@@ -148,9 +148,9 @@ export default function LoginPage() {
             <div>
               <label className="mb-1.5 block text-xs font-medium text-zinc-400">Email</label>
               <input
-                type="email" required value={email}
+                type="email" autoComplete="email" required value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="premium-input"
+                className="premium-input [touch-action:manipulation]"
                 placeholder="voce@email.com"
               />
             </div>
@@ -159,7 +159,7 @@ export default function LoginPage() {
               <input
                 type="password" required minLength={6} value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="premium-input"
+                className="premium-input [touch-action:manipulation]"
                 placeholder="Mínimo 6 caracteres"
               />
             </div>
