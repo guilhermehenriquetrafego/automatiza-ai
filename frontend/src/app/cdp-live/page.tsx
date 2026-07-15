@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { api } from '@/lib/api'
-import { Radio, Activity, Clock, CheckCircle2, AlertCircle, Loader2, Zap, Calendar, Cpu, Wifi, Monitor } from 'lucide-react'
+import { Radio, Activity, Clock, CheckCircle2, AlertCircle, Loader2, Zap, Calendar, Cpu, Wifi, Monitor, Play, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://automatiza-ai-api.onrender.com/api/v1'
 
@@ -42,53 +43,73 @@ interface ScheduledAction {
   variation_title: string | null
 }
 
+interface OlxAccount {
+  id: string
+  email: string
+  account_type: string
+  is_authenticated: boolean
+}
+
 export default function CdpLivePage() {
   const [sessions, setSessions] = useState<CdpSession[]>([])
   const [activity, setActivity] = useState<CdpActivity[]>([])
   const [scheduled, setScheduled] = useState<ScheduledAction[]>([])
+  const [accounts, setAccounts] = useState<OlxAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'live' | 'scheduled' | 'history'>('live')
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchData = async () => {
       const token = localStorage.getItem('token')
       if (!token) return
+      const headers = { Authorization: `Bearer ${token}` }
 
       try {
-        const headers = { Authorization: `Bearer ${token}` }
-
-        // Fetch sessions
-        const sessRes = await fetch(`${API_URL}/cdp-live/sessions`, { headers })
-        const sessData = sessRes.ok ? await sessRes.json() : []
-
-        // Fetch activity
-        const actRes = await fetch(`${API_URL}/cdp-live/activity`, { headers })
-        const actData = actRes.ok ? await actRes.json() : []
-
-        // Fetch schedule
-        const schRes = await fetch(`${API_URL}/cdp-live/schedule`, { headers })
-        const schData = schRes.ok ? await schRes.json() : []
-
-        setSessions(sessData)
-        setActivity(actData)
-        setScheduled(schData)
+        const [sessRes, actRes, schRes, accRes] = await Promise.all([
+          fetch(`${API_URL}/cdp-live/sessions`, { headers }).then(r => r.ok ? r.json() : []),
+          fetch(`${API_URL}/cdp-live/activity`, { headers }).then(r => r.ok ? r.json() : []),
+          fetch(`${API_URL}/cdp-live/schedule`, { headers }).then(r => r.ok ? r.json() : []),
+          fetch(`${API_URL}/accounts`, { headers }).then(r => r.ok ? r.json() : []),
+        ])
+        setSessions(sessRes)
+        setActivity(actRes)
+        setScheduled(schRes)
+        setAccounts(accRes)
       } catch {}
       finally { setLoading(false) }
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 3000) // Live update every 3s
+    const interval = setInterval(fetchData, 3000)
     return () => clearInterval(interval)
   }, [])
 
+  const triggerAction = async (accountId: string, action: string) => {
+    setActionLoading(`${accountId}-${action}`)
+    const token = localStorage.getItem('token')
+    try {
+      const res = await fetch(`${API_URL}/cdp-live/trigger`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: accountId, action }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(data.message || 'Ação iniciada')
+      } else {
+        toast.error(data.detail || 'Erro ao iniciar ação')
+      }
+    } catch {
+      toast.error('Erro de conexão')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const statusColors: Record<string, string> = {
-    idle: 'idle',
-    connecting: 'pending',
-    logging_in: 'pending',
-    posting: 'pending',
-    syncing: 'pending',
-    success: 'active',
-    error: 'error',
+    idle: 'idle', connecting: 'pending', logging_in: 'pending',
+    posting: 'pending', syncing: 'pending', success: 'active', error: 'error',
   }
 
   if (loading) return <CdpSkeleton />
@@ -139,16 +160,61 @@ export default function CdpLivePage() {
         </div>
       </div>
 
+      {/* Action buttons for each OLX account */}
+      {accounts.length > 0 && (
+        <div className="premium-card p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+              <Zap className="h-4.5 w-4.5 text-indigo-400" fill="currentColor" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-white">Disparar Ação CDP</h2>
+              <p className="text-xs text-zinc-500">Login real e sync de limites via Chrome DevTools Protocol</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {accounts.map(acc => (
+              <div key={acc.id} className="flex items-center gap-3 rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-3">
+                <div className={`flex h-9 w-9 items-center justify-center rounded-full flex-shrink-0 ${
+                  acc.is_authenticated ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'
+                }`}>
+                  {acc.is_authenticated ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <AlertCircle className="h-4 w-4 text-red-400" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white truncate">{acc.email}</p>
+                  <p className="text-xs text-zinc-500">
+                    {acc.is_authenticated ? 'Autenticada' : 'Não autenticada'} · {acc.account_type === 'professional' ? 'Profissional' : 'Gratuita'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => triggerAction(acc.id, 'login')}
+                  disabled={actionLoading === `${acc.id}-login`}
+                  className="btn-ghost text-xs py-1.5 px-3"
+                >
+                  {actionLoading === `${acc.id}-login` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  Login
+                </button>
+                <button
+                  onClick={() => triggerAction(acc.id, 'sync_limits')}
+                  disabled={actionLoading === `${acc.id}-sync_limits`}
+                  className="btn-ghost text-xs py-1.5 px-3"
+                >
+                  {actionLoading === `${acc.id}-sync_limits` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  Sync
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl bg-zinc-900/60 p-1 border border-zinc-800/50 w-fit">
         {(['live', 'scheduled', 'history'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
+          <button key={t} onClick={() => setActiveTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               activeTab === t ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'
-            }`}
-          >
+            }`}>
             {t === 'live' ? 'Ao Vivo' : t === 'scheduled' ? 'Agendados' : 'Histórico'}
           </button>
         ))}
@@ -164,11 +230,11 @@ export default function CdpLivePage() {
               </div>
               <h3 className="text-base font-semibold text-white">Nenhuma sessão CDP ativa</h3>
               <p className="text-sm text-zinc-500 mt-1 max-w-sm mx-auto">
-                Quando o sistema iniciar uma automação (login, postagem, sync de limites), você verá tudo acontecer aqui em tempo real.
+                Dispare um Login ou Sync acima. Quando a automação iniciar, você verá cada passo acontecer aqui em tempo real.
               </p>
             </div>
           ) : (
-            sessions.map(sess => (
+            sessions.slice().reverse().map(sess => (
               <div key={sess.id} className="premium-card p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -194,16 +260,14 @@ export default function CdpLivePage() {
                 {/* Steps timeline */}
                 <div className="space-y-2 pl-2">
                   {sess.steps?.map((step, i) => (
-                    <div key={i} className="flex items-start gap-3 text-sm">
+                    <div key={i} className="flex items-start gap-3 text-sm slide-in">
                       <div className={`mt-1.5 h-2 w-2 rounded-full flex-shrink-0 ${
                         step.status === 'success' ? 'bg-emerald-500' :
                         step.status === 'error' ? 'bg-red-500' :
-                        step.status === 'running' ? 'bg-indigo-500 animate-pulse' :
-                        'bg-zinc-700'
+                        step.status === 'running' ? 'bg-indigo-500 animate-pulse' : 'bg-zinc-700'
                       }`} />
                       <div className="flex-1 min-w-0">
-                        <p className="text-zinc-300">{step.action}</p>
-                        {step.message && <p className="text-xs text-zinc-600">{step.message}</p>}
+                        <p className="text-zinc-300">{step.message}</p>
                       </div>
                       <span className="text-[10px] text-zinc-700 flex-shrink-0">
                         {new Date(step.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -276,7 +340,7 @@ export default function CdpLivePage() {
                   <span className="text-zinc-600 mx-2">·</span>
                   <span className="text-zinc-500">{a.account_email}</span>
                 </div>
-                {a.message && <span className="text-xs text-zinc-600 truncate">{a.message}</span>}
+                {a.message && <span className="text-xs text-zinc-600 truncate hidden md:inline">{a.message}</span>}
                 <span className="text-[10px] text-zinc-700 flex-shrink-0">
                   {new Date(a.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>
@@ -299,6 +363,7 @@ function CdpSkeleton() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}
       </div>
+      <div className="skeleton h-32 rounded-2xl" />
       <div className="skeleton h-10 w-96 rounded-xl" />
       <div className="space-y-3">
         {Array.from({ length: 3 }).map((_, i) => <div key={i} className="skeleton h-32 rounded-2xl" />)}

@@ -139,7 +139,10 @@ class StealthBrowser:
 
     # Chrome flags that minimize detection
     CHROME_FLAGS = [
-        "--remote-debugging-port=0",       # Random port, assigned by Chrome
+        "--remote-debugging-port=9222",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-blink-features=AutomationControlled",  # Key: removes webdriver flag
@@ -221,20 +224,32 @@ class StealthBrowser:
         """Discover the CDP WebSocket URL from Chrome's debug port."""
         import aiohttp
 
-        # Try common ports
-        for port in range(9222, 9250):
+        # Connect directly to http://localhost:9222/json/version
+        port = 9222
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://localhost:{port}/json/version", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        self._ws_url = data.get("webSocketDebuggerUrl")
+                        self._debug_port = port
+                        return
+        except Exception as e:
+            logger.warning(f"Direct connection to port {port} failed: {e}")
+
+        # Fallback to general lookup or stderr reading if direct port fails
+        for p in range(9222, 9250):
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f"http://localhost:{port}/json/version", timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                    async with session.get(f"http://localhost:{p}/json/version", timeout=aiohttp.ClientTimeout(total=2)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             self._ws_url = data.get("webSocketDebuggerUrl")
-                            self._debug_port = port
+                            self._debug_port = p
                             return
             except Exception:
                 continue
 
-        # If not found in common ports, try parsing Chrome's stderr for the port
         if self._process and self._process.stderr:
             try:
                 data = await asyncio.wait_for(self._process.stderr.read(4096), timeout=5)
@@ -242,9 +257,9 @@ class StealthBrowser:
                 import re
                 port_match = re.search(r"DevTools listening on ws://.*?:(\d+)", output)
                 if port_match:
-                    port = int(port_match.group(1))
-                    self._debug_port = port
-                    self._ws_url = f"ws://localhost:{port}/devtools/browser"
+                    p = int(port_match.group(1))
+                    self._debug_port = p
+                    self._ws_url = f"ws://localhost:{p}/devtools/browser"
                     return
             except Exception:
                 pass
@@ -255,9 +270,16 @@ class StealthBrowser:
         """Find the Chrome binary on the system."""
         import shutil
         import platform
+        import os
+
+        # Check CHROME_BIN environment variable first
+        chrome_bin = os.environ.get("CHROME_BIN")
+        if chrome_bin and (shutil.which(chrome_bin) or os.path.exists(chrome_bin)):
+            return chrome_bin
 
         candidates = {
             "Linux": [
+                "/usr/bin/chromium",
                 "google-chrome",
                 "google-chrome-stable",
                 "chromium",
