@@ -20,25 +20,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} starting...")
-    # Initialize database (create tables, install extensions)
-    try:
-        from app.models import Base, engine
-        async with engine.begin() as conn:
-            from sqlalchemy import text
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""))
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database initialized")
-    except Exception as e:
-        logger.warning(f"Database init skipped (will retry on first request): {e}")
-
     yield
-
     logger.info("Shutting down...")
-    try:
-        await engine.dispose()
-    except Exception:
-        pass
 
 
 app = FastAPI(
@@ -80,3 +63,19 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.post("/init-db")
+async def init_db():
+    """Initialize database tables. Call this once after deployment."""
+    import traceback
+    try:
+        from app.models import Base, engine
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.run_sync(Base.metadata.create_all)
+        return {"status": "success", "message": "Database initialized"}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
