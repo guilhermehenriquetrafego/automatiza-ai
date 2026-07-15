@@ -37,17 +37,17 @@ export default function ConfigPage() {
   }
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-6 fade-in pb-20 md:pb-0">
       <div>
-        <h1 className="text-2xl font-bold text-white">Configurações</h1>
-        <p className="text-sm text-zinc-500 mt-1">Gerencie suas contas OLX e sistema</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-white">Configurações</h1>
+        <p className="text-xs sm:text-sm text-zinc-500 mt-1">Gerencie suas contas OLX e sistema</p>
       </div>
 
       {/* OLX Accounts */}
-      <div className="premium-card p-6">
-        <div className="flex items-center justify-between mb-5">
+      <div className="premium-card p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex-shrink-0">
               <Shield className="h-5 w-5 text-indigo-400" />
             </div>
             <div>
@@ -55,7 +55,7 @@ export default function ConfigPage() {
               <p className="text-xs text-zinc-500">{accounts.length} conta(s) conectada(s)</p>
             </div>
           </div>
-          <button onClick={() => setShowForm(true)} className="btn-accent">
+          <button onClick={() => setShowForm(true)} className="btn-accent w-full sm:w-auto justify-center">
             <Plus className="h-4 w-4" />
             Conectar OLX
           </button>
@@ -76,32 +76,36 @@ export default function ConfigPage() {
         ) : (
           <div className="space-y-3">
             {accounts.map(acc => (
-              <div key={acc.id} className="flex items-center gap-4 rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-4">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
-                  acc.is_authenticated ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'
-                }`}>
-                  {acc.is_authenticated ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : <AlertCircle className="h-5 w-5 text-red-400" />}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-white">{acc.email}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className={`status-badge ${acc.account_type === 'professional' ? 'active' : 'idle'}`}>
-                      {acc.account_type === 'professional' ? 'Profissional' : 'Gratuita'}
-                    </span>
-                    {acc.is_authenticated ? (
-                      <span className="text-xs text-emerald-400">Autenticada</span>
-                    ) : (
-                      <span className="text-xs text-amber-400">Conectando via CDP...</span>
-                    )}
+              <div key={acc.id} className="flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-4">
+                <div className="flex items-center gap-4 flex-1 min-w-0">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-full flex-shrink-0 ${
+                    acc.is_authenticated ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-red-500/10 border border-red-500/20'
+                  }`}>
+                    {acc.is_authenticated ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : <AlertCircle className="h-5 w-5 text-red-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{acc.email}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`status-badge ${acc.account_type === 'professional' ? 'active' : 'idle'}`}>
+                        {acc.account_type === 'professional' ? 'Profissional' : 'Gratuita'}
+                      </span>
+                      {acc.is_authenticated ? (
+                        <span className="text-xs text-emerald-400">Autenticada</span>
+                      ) : (
+                        <span className="text-xs text-amber-400">Conectando via CDP...</span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-zinc-600">Disponível</p>
-                  <p className="text-lg font-bold text-white">{acc.remaining_this_month}<span className="text-sm text-zinc-600">/{acc.total_monthly_limit}</span></p>
+                <div className="flex items-center justify-between sm:justify-end gap-4 border-t border-zinc-800/50 sm:border-t-0 pt-3 sm:pt-0">
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs text-zinc-600">Disponível</p>
+                    <p className="text-lg font-bold text-white">{acc.remaining_this_month}<span className="text-xs sm:text-sm text-zinc-600">/{acc.total_monthly_limit}</span></p>
+                  </div>
+                  <button onClick={() => { loadAccounts(); toast.info('Sincronizando...') }} className="btn-ghost p-2 rounded-xl">
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
                 </div>
-                <button onClick={() => { loadAccounts(); toast.info('Sincronizando...') }} className="btn-ghost p-2">
-                  <RefreshCw className="h-4 w-4" />
-                </button>
               </div>
             ))}
           </div>
@@ -109,9 +113,9 @@ export default function ConfigPage() {
       </div>
 
       {/* System info */}
-      <div className="premium-card p-6">
+      <div className="premium-card p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/50 border border-zinc-700">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800/50 border border-zinc-700 flex-shrink-0">
             <Cpu className="h-5 w-5 text-zinc-400" />
           </div>
           <div>
@@ -119,7 +123,7 @@ export default function ConfigPage() {
             <p className="text-xs text-zinc-500">Tecnologia por trás do AUTOMATIZA AI</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <InfoItem label="Automação" value="CDP" sub="Chrome DevTools Protocol" icon={Zap} color="indigo" />
           <InfoItem label="IA Texto" value="GPT-4o" sub="Variações de título/descrição" icon={Cpu} color="blue" />
           <InfoItem label="IA Imagem" value="gpt-image-2" sub="Imagens únicas" icon={Zap} color="emerald" />
@@ -129,9 +133,9 @@ export default function ConfigPage() {
 
       {/* Add Account Modal */}
       {showForm && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
-          <div className="w-full max-w-md premium-card p-6 fade-in" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" onClick={() => setShowForm(false)}>
+          <div className="w-full max-w-md premium-card p-6 rounded-b-none sm:rounded-b-2xl animate-slide-up sm:animate-fade-in flex flex-col h-[90vh] sm:h-auto overflow-hidden bg-[#0a0a0f]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5 flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20">
                   <Shield className="h-5 w-5 text-indigo-400" />
@@ -141,18 +145,18 @@ export default function ConfigPage() {
                   <p className="text-xs text-zinc-500">Login automático via CDP</p>
                 </div>
               </div>
-              <button onClick={() => setShowForm(false)} className="text-zinc-500 hover:text-white">
+              <button onClick={() => setShowForm(false)} className="text-zinc-500 hover:text-white p-1">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <form onSubmit={handleAdd} className="space-y-4">
+            <form onSubmit={handleAdd} className="space-y-4 flex-1 overflow-y-auto pr-1">
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-zinc-400">Email da OLX</label>
-                <input className="premium-input" required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" />
+                <input className="premium-input w-full" required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" />
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-zinc-400">Senha da OLX</label>
-                <input className="premium-input" required type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
+                <input className="premium-input w-full" required type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
               </div>
               <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/15 p-3">
                 <p className="text-xs text-zinc-400">
@@ -160,7 +164,7 @@ export default function ConfigPage() {
                   O sistema fará login automaticamente via CDP, detectará se a conta é profissional ou gratuita, e sincronizará os limites — tudo sozinho.
                 </p>
               </div>
-              <button type="submit" disabled={connecting} className="btn-accent w-full justify-center">
+              <button type="submit" disabled={connecting} className="btn-accent w-full justify-center py-2.5">
                 {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 {connecting ? 'Conectando...' : 'Conectar conta'}
               </button>
@@ -181,13 +185,13 @@ function InfoItem({ label, value, sub, icon: Icon, color }: { label: string; val
   }
   return (
     <div className="flex items-center gap-3 rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-3">
-      <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${colors[color]}`}>
+      <div className={`flex h-8 w-8 items-center justify-center rounded-lg border flex-shrink-0 ${colors[color]}`}>
         <Icon className="h-4 w-4" />
       </div>
-      <div>
+      <div className="min-w-0">
         <p className="text-xs text-zinc-500">{label}</p>
         <p className="text-sm font-semibold text-white">{value}</p>
-        <p className="text-[10px] text-zinc-600">{sub}</p>
+        <p className="text-[10px] text-zinc-600 truncate">{sub}</p>
       </div>
     </div>
   )
