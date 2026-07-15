@@ -164,6 +164,13 @@ class StealthBrowser:
         "--disable-sync",
         "--disable-default-apps",
         "--mute-audio",
+        "--disable-software-rasterizer",
+        "--disable-features=VizDisplayCompositor,Translate,BackForwardCache",
+        "--remote-debugging-address=127.0.0.1",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
         # Do NOT use --headless in production — use headless=new in Chrome 109+
         # Headless detection is a major fingerprinting vector
     ]
@@ -207,9 +214,34 @@ class StealthBrowser:
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # Wait for Chrome to start and get the debugging port
-        await asyncio.sleep(2)
-        await self._discover_ws_url()
+        # Wait for Chrome to start and discover the debugging port
+        # Retry for up to 15 seconds (Chrome can be slow in containers)
+        discovered = False
+        for attempt in range(15):
+            await asyncio.sleep(1)
+            # Check if process died
+            if self._process.returncode is not None:
+                stderr_data = b""
+                try:
+                    stderr_data = await asyncio.wait_for(
+                        self._process.stderr.read(8192), timeout=2
+                    )
+                except Exception:
+                    pass
+                stderr_text = stderr_data.decode("utf-8", errors="ignore")
+                raise CDPError(f"Chrome exited with code {self._process.returncode}. Stderr: {stderr_text[:500]}")
+            try:
+                await self._discover_ws_url()
+                discovered = True
+                break
+            except CDPError:
+                if attempt == 14:
+                    raise
+                logger.debug(f"Waiting for Chrome debug port... (attempt {attempt + 1}/15)")
+                continue
+
+        if not discovered:
+            raise CDPError("Chrome debug port not available after 15 seconds")
 
         # Connect via CDP
         self._cdp = CDPConnection(self._ws_url)
@@ -224,42 +256,38 @@ class StealthBrowser:
         """Discover the CDP WebSocket URL from Chrome's debug port."""
         import aiohttp
 
-        # Connect directly to http://localhost:9222/json/version
         port = 9222
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://localhost:{port}/json/version", timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self._ws_url = data.get("webSocketDebuggerUrl")
-                        self._debug_port = port
-                        return
-        except Exception as e:
-            logger.warning(f"Direct connection to port {port} failed: {e}")
+        hosts = ["localhost", "127.0.0.1"]
 
-        # Fallback to general lookup or stderr reading if direct port fails
-        for p in range(9222, 9250):
+        for host in hosts:
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f"http://localhost:{p}/json/version", timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                    async with session.get(
+                        f"http://{host}:{port}/json/version",
+                        timeout=aiohttp.ClientTimeout(total=3)
+                    ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             self._ws_url = data.get("webSocketDebuggerUrl")
-                            self._debug_port = p
+                            if self._ws_url:
+                                self._ws_url = self._ws_url.replace("localhost", "127.0.0.1").replace("0.0.0.0", "127.0.0.1")
+                            self._debug_port = port
+                            logger.info(f"CDP discovered at {host}:{port}")
                             return
             except Exception:
                 continue
 
+        # Try reading stderr for the DevTools URL
         if self._process and self._process.stderr:
             try:
-                data = await asyncio.wait_for(self._process.stderr.read(4096), timeout=5)
+                data = await asyncio.wait_for(self._process.stderr.read(4096), timeout=2)
                 output = data.decode("utf-8", errors="ignore")
-                import re
+                logger.warning(f"Chrome stderr: {output[:500]}")
                 port_match = re.search(r"DevTools listening on ws://.*?:(\d+)", output)
                 if port_match:
                     p = int(port_match.group(1))
                     self._debug_port = p
-                    self._ws_url = f"ws://localhost:{p}/devtools/browser"
+                    self._ws_url = f"ws://127.0.0.1:{p}/devtools/browser"
                     return
             except Exception:
                 pass
