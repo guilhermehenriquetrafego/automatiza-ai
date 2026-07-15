@@ -36,6 +36,17 @@ from dataclasses import dataclass, field
 from loguru import logger
 import websockets
 
+try:
+    from app.core.config import settings
+except ImportError:
+    # Fallback if settings not available
+    class _SettingsFallback:
+        CDP_ACTION_DELAY_MIN = 0.5
+        CDP_ACTION_DELAY_MAX = 2.0
+        CDP_MOUSE_SPEED_MIN = 200
+        CDP_MOUSE_SPEED_MAX = 800
+    settings = _SettingsFallback()
+
 
 class CDPConnection:
     """
