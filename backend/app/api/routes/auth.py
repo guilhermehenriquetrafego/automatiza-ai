@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
 import uuid
+import traceback
 
 from app.models import async_session, User, PlanTier
 from app.core.security import hash_password, verify_password, create_token, get_current_user
@@ -43,30 +44,36 @@ PLAN_LIMITS = {
 
 @router.post("/register")
 async def register(req: RegisterRequest):
-    async with async_session() as db:
-        existing = await db.execute(select(User).where(User.email == req.email))
-        if existing.scalars().first():
-            raise HTTPException(400, "Email already registered")
+    try:
+        async with async_session() as db:
+            existing = await db.execute(select(User).where(User.email == req.email))
+            if existing.scalars().first():
+                raise HTTPException(400, "Email already registered")
 
-        limits = PLAN_LIMITS[PlanTier.starter]
-        user = User(
-            email=req.email,
-            password_hash=hash_password(req.password),
-            full_name=req.full_name,
-            phone=req.phone,
-            plan_tier=PlanTier.starter,
-            max_products=limits["max_products"],
-            max_olx_accounts=limits["max_olx_accounts"],
-        )
-        db.add(user)
-        await db.commit()
+            limits = PLAN_LIMITS[PlanTier.starter]
+            user = User(
+                email=req.email,
+                password_hash=hash_password(req.password),
+                full_name=req.full_name,
+                phone=req.phone,
+                plan_tier=PlanTier.starter,
+                max_products=limits["max_products"],
+                max_olx_accounts=limits["max_olx_accounts"],
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
 
-        token = create_token(user.id)
-        return {"token": token, "user": UserResponse(
-            id=str(user.id), email=user.email, full_name=user.full_name,
-            plan_tier=user.plan_tier.value, max_products=user.max_products,
-            max_olx_accounts=user.max_olx_accounts,
-        ).model_dump()}
+            token = create_token(user.id)
+            return {"token": token, "user": UserResponse(
+                id=str(user.id), email=user.email, full_name=user.full_name,
+                plan_tier=user.plan_tier.value, max_products=user.max_products,
+                max_olx_accounts=user.max_olx_accounts,
+            ).model_dump()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Register error: {str(e)}\n{traceback.format_exc()}")
 
 
 @router.post("/login")
