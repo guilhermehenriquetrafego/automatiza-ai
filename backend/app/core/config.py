@@ -19,10 +19,10 @@ class Settings(BaseSettings):
     # --- Database (Supabase free tier) ---
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/automatiza"
 
-    # --- Redis (Upstash free tier) ---
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    # --- Redis (Upstash free tier) — optional, system works without it ---
+    REDIS_URL: str = ""
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
 
     # --- OpenAI ---
     OPENAI_API_KEY: str = ""
@@ -39,20 +39,20 @@ class Settings(BaseSettings):
 
     # --- CDP Automation ---
     CDP_DEBUG: bool = False
-    CDP_HEADLESS: bool = True  # Set to False for debugging
-    CDP_NAVIGATION_TIMEOUT: int = 30000  # ms
-    CDP_ACTION_DELAY_MIN: float = 0.5  # seconds — min delay between actions
-    CDP_ACTION_DELAY_MAX: float = 2.5  # seconds — max delay between actions
-    CDP_MOUSE_STEPS: int = 25  # steps for Bezier mouse movement
-    CDP_SESSION_TIMEOUT: int = 1800  # 30 min max session
-    CDP_MAX_CONCURRENT_SESSIONS: int = 5  # max parallel browser sessions
+    CDP_HEADLESS: bool = True
+    CDP_NAVIGATION_TIMEOUT: int = 30000
+    CDP_ACTION_DELAY_MIN: float = 0.5
+    CDP_ACTION_DELAY_MAX: float = 2.5
+    CDP_MOUSE_STEPS: int = 25
+    CDP_SESSION_TIMEOUT: int = 1800
+    CDP_MAX_CONCURRENT_SESSIONS: int = 5
 
     # --- Motor de Exposição ---
-    EXPOSURE_RECRAWL_INTERVAL_MIN: int = 30  # re-check OLX limits every 30 min
-    EXPOSURE_SIMILARITY_THRESHOLD: float = 0.60  # max trigram similarity between variations
-    EXPOSURE_MAX_DAILY_BURST: float = 1.5  # max % of daily quota in a single burst
-    EXPOSURE_WEEKEND_WEIGHT: float = 1.3  # weight multiplier for weekends
-    EXPOSURE_DEFAULT_PEAK_HOURS: list[int] = [9, 13, 18, 20]  # default peak posting hours
+    EXPOSURE_RECRAWL_INTERVAL_MIN: int = 30
+    EXPOSURE_SIMILARITY_THRESHOLD: float = 0.60
+    EXPOSURE_MAX_DAILY_BURST: float = 1.5
+    EXPOSURE_WEEKEND_WEIGHT: float = 1.3
+    EXPOSURE_DEFAULT_PEAK_HOURS: list[int] = [9, 13, 18, 20]
 
     # --- Security ---
     SECRET_KEY: str = "dev-secret-change-in-production"
@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
+        "https://frontend-sigma-sand-bpme5erw5p.vercel.app",
+        "https://frontend-guilhermes-projects-3609b7fe.vercel.app",
         "https://automatiza-ai.vercel.app",
     ]
 

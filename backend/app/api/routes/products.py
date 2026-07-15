@@ -1,11 +1,10 @@
 """Product routes — CRUD for catalog, image upload."""
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
-from typing import Optional
 import imagehash
 import io
 from PIL import Image
@@ -58,7 +57,6 @@ async def list_products(user: User = Depends(get_current_user)):
         )
         products = result.scalars().all()
 
-        # Get image counts
         responses = []
         for p in products:
             img_result = await db.execute(
@@ -72,7 +70,6 @@ async def list_products(user: User = Depends(get_current_user)):
 @router.post("/")
 async def create_product(req: CreateProductRequest, user: User = Depends(get_current_user)):
     async with async_session() as db:
-        # Check product limit
         count_result = await db.execute(
             select(func.count()).where(
                 Product.user_id == user.id,
@@ -98,10 +95,11 @@ async def create_product(req: CreateProductRequest, user: User = Depends(get_cur
         )
         db.add(product)
         await db.commit()
+        await db.refresh(product)
 
-        # Generate initial variations in background (round 1 = original, round 2 = AI)
-        from app.tasks import generate_variations
-        generate_variations.delay(str(product.id), count=8, round_num=2)
+        # Generate initial variations (safe — falls back to sync if no Redis)
+        from app.tasks import safe_delay, generate_variations
+        safe_delay(generate_variations, str(product.id), count=8, round_num=2)
 
         return _to_response(product, 0).model_dump()
 
@@ -124,6 +122,7 @@ async def update_product(product_id: str, req: CreateProductRequest, user: User 
         product.condition = req.condition
         product.specs = req.specs
         await db.commit()
+        await db.refresh(product)
         return _to_response(product, 0).model_dump()
 
 
@@ -153,15 +152,12 @@ async def upload_images(product_id: str, files: list[UploadFile] = File(...), us
             content = await file.read()
             img = Image.open(io.BytesIO(content))
 
-            # Compute perceptual hash
             phash = str(imagehash.phash(img))
 
-            # Check for duplicates across user's products
             is_dup = await similarity.check_image_duplicate(phash, user.id)
             if is_dup:
                 raise HTTPException(409, f"Image {file.filename} is a duplicate")
 
-            # Upload to R2
             r2_key = f"products/{product_id}/{uuid.uuid4()}.jpg"
             url = await storage.upload(content, r2_key, content_type="image/jpeg")
             if not url:

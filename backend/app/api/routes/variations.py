@@ -1,7 +1,7 @@
 """Variation routes — generate and manage AI variations."""
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -42,10 +42,9 @@ async def list_variations(product_id: str, user: User = Depends(get_current_user
 
 
 @router.post("/product/{product_id}/generate")
-async def generate_variations(
+async def generate_new_variations(
     product_id: str,
     count: int = 8,
-    background_tasks: BackgroundTasks = None,
     user: User = Depends(get_current_user),
 ):
     """Trigger AI generation of new variations for a product."""
@@ -54,8 +53,8 @@ async def generate_variations(
         if not product or product.user_id != user.id:
             raise HTTPException(404, "Product not found")
 
-    from app.tasks import generate_variations
-    generate_variations.delay(product_id, count=count, round_num=2)
+    from app.tasks import safe_delay, generate_variations as gen_variations
+    safe_delay(gen_variations, product_id, count=count, round_num=2)
     return {"status": "generation_started", "count": count}
 
 

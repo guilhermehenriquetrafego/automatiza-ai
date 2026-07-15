@@ -1,12 +1,12 @@
 """OLX Account routes — add/remove accounts, login, sync limits."""
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, EmailStr
 
-from app.models import async_session, User, OlxAccount, OlxAccountType, Product
+from app.models import async_session, User, OlxAccount, OlxAccountType
 from app.core.security import get_current_user
 
 router = APIRouter()
@@ -16,6 +16,7 @@ class AddAccountRequest(BaseModel):
     email: EmailStr
     password: str
     account_type: str  # "free" | "professional"
+    plan_name: str | None = None  # e.g. "Diversos 250"
 
 
 class AccountResponse(BaseModel):
@@ -41,7 +42,7 @@ async def list_accounts(user: User = Depends(get_current_user)):
 
 
 @router.post("/")
-async def add_account(req: AddAccountRequest, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def add_account(req: AddAccountRequest, user: User = Depends(get_current_user)):
     # Check account limit
     async with async_session() as db:
         count_result = await db.execute(
@@ -56,13 +57,15 @@ async def add_account(req: AddAccountRequest, background_tasks: BackgroundTasks,
             email=req.email,
             account_type=OlxAccountType(req.account_type),
             is_authenticated=False,
+            plan_name=req.plan_name,
         )
         db.add(account)
         await db.commit()
+        await db.refresh(account)
 
-        # Schedule login + limit sync in background
-        from app.tasks import sync_olx_limits
-        background_tasks.add_task(sync_olx_limits.delay, str(account.id))
+        # Schedule login + limit sync in background (safe — won't crash if no Redis)
+        from app.tasks import safe_delay, sync_olx_limits
+        safe_delay(sync_olx_limits, str(account.id))
 
         return _to_response(account).model_dump()
 
@@ -79,10 +82,10 @@ async def remove_account(account_id: str, user: User = Depends(get_current_user)
 
 
 @router.post("/{account_id}/sync-limits")
-async def trigger_sync(account_id: str, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def trigger_sync(account_id: str, user: User = Depends(get_current_user)):
     """Manually trigger a limit sync for this account."""
-    from app.tasks import sync_olx_limits
-    background_tasks.add_task(sync_olx_limits.delay, account_id)
+    from app.tasks import safe_delay, sync_olx_limits
+    safe_delay(sync_olx_limits, account_id)
     return {"status": "sync_scheduled"}
 
 

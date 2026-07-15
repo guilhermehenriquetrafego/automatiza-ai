@@ -1,7 +1,7 @@
 """Publication routes — view scheduled/active ads, trigger Motor de Exposição."""
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from pydantic import BaseModel
@@ -42,7 +42,6 @@ async def list_publications(status: str | None = None, user: User = Depends(get_
 
         responses = []
         for pub, account in rows:
-            # Get product and variation titles
             from app.models import Product, AdVariation
             product = await db.get(Product, pub.product_id)
             variation = await db.get(AdVariation, pub.variation_id) if pub.variation_id else None
@@ -86,10 +85,10 @@ async def view_schedule(user: User = Depends(get_current_user)):
 
 
 @router.post("/recalculate")
-async def recalculate_schedule(background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def recalculate_schedule(user: User = Depends(get_current_user)):
     """Manually trigger the Motor de Exposição to recalculate the publishing calendar."""
-    from app.tasks import exposure_engine_run
-    exposure_engine_run.delay(str(user.id))
+    from app.tasks import safe_delay, exposure_engine_run
+    safe_delay(exposure_engine_run, str(user.id))
     return {"status": "recalculation_started"}
 
 
@@ -97,7 +96,6 @@ async def recalculate_schedule(background_tasks: BackgroundTasks, user: User = D
 async def publication_stats(user: User = Depends(get_current_user)):
     """Get publication statistics for the dashboard."""
     async with async_session() as db:
-        # Count by status
         result = await db.execute(
             select(Publication.status, func.count())
             .join(OlxAccount, Publication.olx_account_id == OlxAccount.id)
@@ -106,7 +104,6 @@ async def publication_stats(user: User = Depends(get_current_user)):
         )
         status_counts = {row[0].value: row[1] for row in result.all()}
 
-        # Total ads this month
         now = datetime.now(timezone.utc)
         result = await db.execute(
             select(func.count())
