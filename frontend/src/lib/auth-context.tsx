@@ -18,6 +18,7 @@ interface AuthContextType {
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string, full_name: string) => Promise<void>
+  googleLogin: (credential: string) => Promise<void>
   logout: () => void
 }
 
@@ -37,7 +38,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     api.getOverview().then(() => {
-      // Token is valid — get user info
       const stored = localStorage.getItem('user')
       if (stored) setUser(JSON.parse(stored))
       setLoading(false)
@@ -65,6 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push('/')
   }
 
+  const googleLogin = async (credential: string) => {
+    const res = await api.googleAuth(credential)
+    localStorage.setItem('token', res.token)
+    localStorage.setItem('user', JSON.stringify(res.user))
+    setUser(res.user)
+    router.push('/')
+  }
+
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
@@ -73,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, googleLogin, logout }}>
       {children}
     </AuthContext.Provider>
   )

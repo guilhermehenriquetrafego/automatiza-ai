@@ -1,17 +1,77 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
 
 export default function LoginPage() {
-  const { login, register } = useAuth()
+  const { login, register, googleLogin } = useAuth()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
+  const googleBtnRef = useRef<HTMLDivElement>(null)
+
+  // Google Client ID — set this in your environment variables
+  const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
+
+  useEffect(() => {
+    // Only load Google script if we have a client ID
+    if (!GOOGLE_CLIENT_ID || !googleBtnRef.current) return
+
+    // Check if script already loaded
+    if (document.querySelector('script[src*="accounts.google.com/gsi/client"]')) {
+      initGoogleButton()
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = initGoogleButton
+    document.head.appendChild(script)
+
+    return () => {
+      // Cleanup
+      window.google = undefined as any
+    }
+  }, [GOOGLE_CLIENT_ID, mode])
+
+  const initGoogleButton = () => {
+    if (!window.google || !googleBtnRef.current) return
+
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleResponse,
+      auto_select: false,
+      cancel_on_tap_outside: true,
+    })
+
+    window.google.accounts.id.renderButton(googleBtnRef.current, {
+      theme: 'outline',
+      size: 'large',
+      width: '100%',
+      text: 'continue_with',
+      shape: 'rounded',
+      locale: 'pt-BR',
+    })
+  }
+
+  const handleGoogleResponse = async (response: { credential: string }) => {
+    setGoogleLoading(true)
+    try {
+      await googleLogin(response.credential)
+      toast.success('Bem-vindo!')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao entrar com Google')
+    } finally {
+      setGoogleLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -75,6 +135,39 @@ export default function LoginPage() {
               Criar Conta
             </button>
           </div>
+
+          {/* Google Sign In */}
+          {GOOGLE_CLIENT_ID && (
+            <div className="mb-5">
+              <div ref={googleBtnRef} className="gsi-container w-full" />
+              {googleLoading && (
+                <div className="mt-2 flex items-center justify-center gap-2 text-sm text-slate-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Entrando com Google...
+                </div>
+              )}
+              {/* Divider */}
+              <div className="my-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-700/50" />
+                <span className="text-xs text-slate-500">ou</span>
+                <div className="h-px flex-1 bg-slate-700/50" />
+              </div>
+            </div>
+          )}
+
+          {/* Fallback Google button (when no Client ID configured) */}
+          {!GOOGLE_CLIENT_ID && (
+            <div className="mb-5">
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-center text-xs text-amber-400">
+                Login com Google em breve. Use email e senha por enquanto.
+              </div>
+              <div className="my-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-700/50" />
+                <span className="text-xs text-slate-500">ou</span>
+                <div className="h-px flex-1 bg-slate-700/50" />
+              </div>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -140,4 +233,19 @@ export default function LoginPage() {
       </div>
     </div>
   )
+}
+
+// Type declaration for Google Identity Services
+declare global {
+  interface Window {
+    google: {
+      accounts: {
+        id: {
+          initialize: (config: any) => void
+          renderButton: (parent: HTMLElement, options: any) => void
+          prompt: () => void
+        }
+      }
+    }
+  }
 }

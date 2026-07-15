@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     OPENAI_TEXT_MODEL: str = "gpt-4o"
     OPENAI_IMAGE_MODEL: str = "gpt-image-2"  # ChatGPT Images 2.0
 
+    # --- Google OAuth ---
+    GOOGLE_CLIENT_ID: str = ""
+
     # --- Cloudflare R2 (free tier — 10GB storage, free egress) ---
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""

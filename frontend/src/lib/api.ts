@@ -54,6 +54,8 @@ export const api = {
     fetchAPI<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   register: (data: { email: string; password: string; full_name: string }) =>
     fetchAPI<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  googleAuth: (credential: string) =>
+    fetchAPI<AuthResponse>('/auth/google', { method: 'POST', body: JSON.stringify({ credential }) }),
 }
 
 // Types
