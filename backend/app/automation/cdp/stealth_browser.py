@@ -101,13 +101,15 @@ class CDPConnection:
         except Exception as e:
             logger.error(f"CDP read loop error: {e}")
 
-    async def send(self, method: str, params: dict | None = None) -> dict:
+    async def send(self, method: str, params: dict | None = None, session_id: str | None = None) -> dict:
         """Send a CDP command and wait for the response."""
         self._cmd_id += 1
         cmd_id = self._cmd_id
         msg = {"id": cmd_id, "method": method}
         if params:
             msg["params"] = params
+        if session_id:
+            msg["sessionId"] = session_id
 
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[cmd_id] = future
@@ -181,6 +183,8 @@ class StealthBrowser:
         self._cdp: Optional[CDPConnection] = None
         self._ws_url: Optional[str] = None
         self._debug_port: Optional[int] = None
+        self._target_id: Optional[str] = None
+        self._session_id: Optional[str] = None
 
     async def launch(self, user_data_dir: Optional[str] = None, proxy: Optional[str] = None):
         """Launch Chrome and establish CDP connection."""
@@ -243,11 +247,31 @@ class StealthBrowser:
         if not discovered:
             raise CDPError("Chrome debug port not available after 15 seconds")
 
-        # Connect via CDP
+        # Connect via CDP (browser-level)
         self._cdp = CDPConnection(self._ws_url)
         await self._cdp.connect()
+        logger.info("CDP browser connection established")
 
-        # Apply stealth patches
+        # Create a new page target
+        result = await self._cdp.send("Target.createTarget", {"url": "about:blank"})
+        self._target_id = result.get("targetId")
+        logger.info(f"Created target: {self._target_id}")
+
+        # Attach to the target (flatten mode for multi-session)
+        result = await self._cdp.send("Target.attachToTarget", {
+            "targetId": self._target_id,
+            "flatten": True
+        })
+        self._session_id = result.get("sessionId")
+        logger.info(f"Attached to target, session: {self._session_id}")
+
+        # Enable required domains on the page session
+        await self._cdp.send("Page.enable", session_id=self._session_id)
+        await self._cdp.send("Runtime.enable", session_id=self._session_id)
+        await self._cdp.send("Network.enable", session_id=self._session_id)
+        await self._cdp.send("DOM.enable", session_id=self._session_id)
+
+        # Apply stealth patches on the page session
         await self._apply_stealth()
 
         logger.info("Stealth browser launched and patched")
@@ -345,23 +369,20 @@ class StealthBrowser:
         This is the key differentiator — patches are applied at the protocol level,
         not via JavaScript that can be detected by the page.
         """
+        sid = self._session_id
         # 1. Override navigator.webdriver (patch at CDP level, not JS level)
         await self._cdp.send("Page.addScriptToEvaluateOnNewDocument", {
             "source": STEALTH_SCRIPT
-        })
+        }, session_id=sid)
 
         # 2. Set consistent user-agent and platform
         await self._cdp.send("Network.setUserAgentOverride", {
             "userAgent": self._generate_ua(),
             "platform": "Win32",
             "acceptLanguage": "pt-BR,pt;q=0.9,en;q=0.8",
-        })
+        }, session_id=sid)
 
-        # 3. Enable necessary domains
-        await self._cdp.send("Page.enable")
-        await self._cdp.send("Network.enable")
-        await self._cdp.send("Runtime.enable")
-        await self._cdp.send("DOM.enable")
+        # 3. Domains already enabled during target attach
 
         logger.info("Stealth patches applied")
 
@@ -380,7 +401,7 @@ class StealthBrowser:
     async def navigate(self, url: str, wait: bool = True) -> dict:
         """Navigate to a URL with human-like timing."""
         logger.info(f"Navigating to {url}")
-        result = await self._cdp.send("Page.navigate", {"url": url})
+        result = await self._cdp.send("Page.navigate", {"url": url}, session_id=self._session_id)
 
         if wait:
             await self._wait_for_load()
@@ -429,7 +450,7 @@ class StealthBrowser:
             "y": click_y,
             "button": "left",
             "clickCount": 1,
-        })
+        }, session_id=self._session_id)
         await asyncio.sleep(random.uniform(0.05, 0.15))
         await self._cdp.send("Input.dispatchMouseEvent", {
             "type": "mouseReleased",
@@ -437,7 +458,7 @@ class StealthBrowser:
             "y": click_y,
             "button": "left",
             "clickCount": 1,
-        })
+        }, session_id=self._session_id)
 
         logger.debug(f"Clicked {selector} at ({click_x:.0f}, {click_y:.0f})")
 
@@ -455,11 +476,11 @@ class StealthBrowser:
             await self._cdp.send("Input.dispatchKeyEvent", {
                 "type": "keyDown",
                 "text": char,
-            })
+            }, session_id=self._session_id)
             await self._cdp.send("Input.dispatchKeyEvent", {
                 "type": "keyUp",
                 "text": char,
-            })
+            }, session_id=self._session_id)
             # Log-normal delay between keystrokes (more natural than uniform)
             delay = self._log_normal_delay(per_char_delay[0], per_char_delay[1])
             await asyncio.sleep(delay)
@@ -473,7 +494,7 @@ class StealthBrowser:
         This is more stealthy than setInputFiles because it simulates a real user interaction.
         """
         # Set up interceptor for file chooser
-        await self._cdp.send("Page.setInterceptFileChooserDialog", {"enabled": True})
+        await self._cdp.send("Page.setInterceptFileChooserDialog", {"enabled": True}, session_id=self._session_id)
 
         # Create a future to handle the file chooser event
         future: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -494,14 +515,14 @@ class StealthBrowser:
             await self._cdp.send("Page.handleFileChooser", {
                 "action": "accept",
                 "files": [file_path],
-            })
+            }, session_id=self._session_id)
             logger.info(f"Uploaded file: {file_path}")
         except asyncio.TimeoutError:
             logger.error("File chooser did not open")
             raise CDPError("File chooser timeout")
 
         # Disable interceptor
-        await self._cdp.send("Page.setInterceptFileChooserDialog", {"enabled": False})
+        await self._cdp.send("Page.setInterceptFileChooserDialog", {"enabled": False}, session_id=self._session_id)
 
     async def wait_for_selector(self, selector: str, timeout: float = 30.0):
         """Wait until an element exists on the page."""
@@ -527,7 +548,7 @@ class StealthBrowser:
 
     async def screenshot(self) -> bytes:
         """Take a screenshot of the current page."""
-        result = await self._cdp.send("Page.captureScreenshot", {"format": "png"})
+        result = await self._cdp.send("Page.captureScreenshot", {"format": "png"}, session_id=self._session_id)
         return base64.b64decode(result["data"])
 
     # ============================================================
@@ -536,7 +557,7 @@ class StealthBrowser:
 
     async def save_session(self) -> dict:
         """Save cookies and localStorage for session persistence."""
-        cookies = await self._cdp.send("Network.getAllCookies")
+        cookies = await self._cdp.send("Network.getAllCookies", session_id=self._session_id)
 
         # Get localStorage via JS (CDP doesn't have direct localStorage API)
         local_storage = await self._evaluate_js("""
@@ -582,7 +603,7 @@ class StealthBrowser:
         return await self._cdp.send("Runtime.evaluate", {
             "expression": expression,
             "returnByValue": True,
-        })
+        }, session_id=self._session_id)
 
     async def _get_element_coords(self, selector: str) -> Optional[tuple]:
         """Get element bounding box coordinates."""
@@ -626,7 +647,7 @@ class StealthBrowser:
                 "type": "mouseMoved",
                 "x": x,
                 "y": y,
-            })
+            }, session_id=self._session_id)
             await asyncio.sleep(random.uniform(0.005, 0.02))  # ~50fps with variance
 
     def _log_normal_delay(self, min_delay: float, max_delay: float) -> float:
