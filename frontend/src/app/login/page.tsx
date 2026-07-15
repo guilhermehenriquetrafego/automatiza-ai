@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/lib/auth-context'
 import { toast } from 'sonner'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Zap, ArrowRight } from 'lucide-react'
 
 export default function LoginPage() {
   const { login, register, googleLogin } = useAuth()
@@ -14,52 +14,35 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const googleBtnRef = useRef<HTMLDivElement>(null)
-
-  // Google Client ID — set this in your environment variables
   const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
 
   useEffect(() => {
-    // Only load Google script if we have a client ID
     if (!GOOGLE_CLIENT_ID || !googleBtnRef.current) return
-
-    // Check if script already loaded
-    if (document.querySelector('script[src*="accounts.google.com/gsi/client"]')) {
-      initGoogleButton()
-      return
+    const checkGoogle = () => {
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleResponse,
+        })
+        window.google.accounts.id.renderButton(googleBtnRef.current!, {
+          theme: 'outline', size: 'large', width: 400, text: 'continue_with', shape: 'rounded', locale: 'pt-BR',
+        })
+      } else {
+        setTimeout(checkGoogle, 100)
+      }
     }
 
-    const script = document.createElement('script')
-    script.src = 'https://accounts.google.com/gsi/client'
-    script.async = true
-    script.defer = true
-    script.onload = initGoogleButton
-    document.head.appendChild(script)
-
-    return () => {
-      // Cleanup
-      window.google = undefined as any
+    if (!document.querySelector('script[src*="accounts.google.com/gsi/client"]')) {
+      const script = document.createElement('script')
+      script.src = 'https://accounts.google.com/gsi/client'
+      script.async = true
+      script.defer = true
+      script.onload = checkGoogle
+      document.head.appendChild(script)
+    } else {
+      checkGoogle()
     }
-  }, [GOOGLE_CLIENT_ID, mode])
-
-  const initGoogleButton = () => {
-    if (!window.google || !googleBtnRef.current) return
-
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: handleGoogleResponse,
-      auto_select: false,
-      cancel_on_tap_outside: true,
-    })
-
-    window.google.accounts.id.renderButton(googleBtnRef.current, {
-      theme: 'outline',
-      size: 'large',
-      width: '100%',
-      text: 'continue_with',
-      shape: 'rounded',
-      locale: 'pt-BR',
-    })
-  }
+  }, [GOOGLE_CLIENT_ID])
 
   const handleGoogleResponse = async (response: { credential: string }) => {
     setGoogleLoading(true)
@@ -92,141 +75,102 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-4">
-      {/* Glow effect */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl" />
+    <div className="flex min-h-screen items-center justify-center px-4 relative overflow-hidden bg-[#0a0a0f]">
+      {/* Ambient glow */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-indigo-500/8 blur-[120px]" />
+        <div className="absolute right-1/4 bottom-1/4 h-[300px] w-[300px] rounded-full bg-purple-500/5 blur-[100px]" />
       </div>
 
-      <div className="relative z-10 w-full max-w-md">
+      {/* Grid pattern */}
+      <div className="pointer-events-none absolute inset-0 opacity-[0.03]" style={{
+        backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+        backgroundSize: '40px 40px'
+      }} />
+
+      <div className="relative z-10 w-full max-w-[420px]">
         {/* Logo */}
-        <div className="mb-8 text-center">
-          <div className="mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/30">
-            <svg className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+        <div className="mb-10 text-center">
+          <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 shadow-xl shadow-indigo-500/30">
+            <Zap className="h-7 w-7 text-white" fill="white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">AUTOMATIZA AI</h1>
-          <p className="mt-1 text-sm text-slate-400">Gestão de Exposição de Anúncios OLX</p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">AUTOMATIZA<span className="text-indigo-400"> AI</span></h1>
+          <p className="mt-2 text-sm text-zinc-500">Gestão inteligente de exposição de anúncios OLX</p>
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-8 backdrop-blur-xl">
-          {/* Tabs */}
-          <div className="mb-6 flex gap-2 rounded-xl bg-slate-900/50 p-1">
-            <button
-              onClick={() => setMode('login')}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                mode === 'login'
-                  ? 'bg-blue-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Entrar
-            </button>
-            <button
-              onClick={() => setMode('register')}
-              className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                mode === 'register'
-                  ? 'bg-blue-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Criar Conta
-            </button>
+        <div className="rounded-2xl border border-zinc-800/80 bg-[#13131a]/80 backdrop-blur-xl p-8">
+          {/* Mode toggle */}
+          <div className="mb-6 flex gap-1 rounded-xl bg-zinc-900/60 p-1 border border-zinc-800/50">
+            {(['login', 'register'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                  mode === m
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {m === 'login' ? 'Entrar' : 'Criar conta'}
+              </button>
+            ))}
           </div>
 
-          {/* Google Sign In */}
-          {GOOGLE_CLIENT_ID && (
+          {/* Google button */}
+          {GOOGLE_CLIENT_ID ? (
             <div className="mb-5">
-              <div ref={googleBtnRef} className="gsi-container w-full" />
+              <div ref={googleBtnRef} className="w-full flex justify-center" />
               {googleLoading && (
-                <div className="mt-2 flex items-center justify-center gap-2 text-sm text-slate-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Entrando com Google...
-                </div>
+                <p className="mt-2 text-center text-xs text-zinc-500">Conectando com Google...</p>
               )}
-              {/* Divider */}
-              <div className="my-4 flex items-center gap-3">
-                <div className="h-px flex-1 bg-slate-700/50" />
-                <span className="text-xs text-slate-500">ou</span>
-                <div className="h-px flex-1 bg-slate-700/50" />
+              <div className="my-5 flex items-center gap-3">
+                <div className="h-px flex-1 bg-zinc-800" />
+                <span className="text-xs text-zinc-600">ou com email</span>
+                <div className="h-px flex-1 bg-zinc-800" />
               </div>
             </div>
-          )}
-
-          {/* Fallback Google button (when no Client ID configured) */}
-          {!GOOGLE_CLIENT_ID && (
-            <div className="mb-5">
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-center text-xs text-amber-400">
-                Login com Google em breve. Use email e senha por enquanto.
-              </div>
-              <div className="my-4 flex items-center gap-3">
-                <div className="h-px flex-1 bg-slate-700/50" />
-                <span className="text-xs text-slate-500">ou</span>
-                <div className="h-px flex-1 bg-slate-700/50" />
-              </div>
-            </div>
-          )}
+          ) : null}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'register' && (
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-300">
-                  Nome completo
-                </label>
+              <div className="fade-in">
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">Nome completo</label>
                 <input
-                  type="text"
-                  required
-                  value={fullName}
+                  type="text" required value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600/50 bg-slate-900/50 px-4 py-2.5 text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  placeholder="Seu nome"
+                  className="premium-input"
+                  placeholder="Como devemos te chamar?"
                 />
               </div>
             )}
-
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-300">
-                Email
-              </label>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Email</label>
               <input
-                type="email"
-                required
-                value={email}
+                type="email" required value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-slate-600/50 bg-slate-900/50 px-4 py-2.5 text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                placeholder="seu@email.com"
+                className="premium-input"
+                placeholder="voce@email.com"
               />
             </div>
-
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-300">
-                Senha
-              </label>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">Senha</label>
               <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
+                type="password" required minLength={6} value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-600/50 bg-slate-900/50 px-4 py-2.5 text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                placeholder="••••••••"
+                className="premium-input"
+                placeholder="Mínimo 6 caracteres"
               />
             </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2.5 font-medium text-white transition hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50"
-            >
-              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            <button type="submit" disabled={loading} className="btn-accent w-full justify-center">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {mode === 'login' ? 'Entrar' : 'Criar conta'}
+              {!loading && <ArrowRight className="h-4 w-4" />}
             </button>
           </form>
 
-          <p className="mt-4 text-center text-xs text-slate-500">
+          <p className="mt-5 text-center text-[11px] text-zinc-600">
             Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade.
           </p>
         </div>
@@ -235,7 +179,6 @@ export default function LoginPage() {
   )
 }
 
-// Type declaration for Google Identity Services
 declare global {
   interface Window {
     google: {

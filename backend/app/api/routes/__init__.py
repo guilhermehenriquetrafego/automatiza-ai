@@ -23,3 +23,6 @@ from app.api.routes import chat
 
 # Dashboard routes — overview stats, performance metrics
 from app.api.routes import dashboard
+
+# CDP Live monitoring routes
+from app.api.routes import cdp_live

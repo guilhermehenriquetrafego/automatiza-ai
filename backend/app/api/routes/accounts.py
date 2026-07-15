@@ -15,7 +15,6 @@ router = APIRouter()
 class AddAccountRequest(BaseModel):
     email: EmailStr
     password: str
-    account_type: str  # "free" | "professional"
     plan_name: str | None = None  # e.g. "Diversos 250"
 
 
@@ -52,22 +51,71 @@ async def add_account(req: AddAccountRequest, user: User = Depends(get_current_u
         if count >= user.max_olx_accounts:
             raise HTTPException(403, f"Account limit reached ({user.max_olx_accounts})")
 
+        # Create account record with default type 'free' (to be detected and updated by CDP session later),
+        # with is_authenticated=False and needs_reauth=True initially.
         account = OlxAccount(
             user_id=user.id,
             email=req.email,
-            account_type=OlxAccountType(req.account_type),
+            account_type=OlxAccountType.free,
             is_authenticated=False,
+            needs_reauth=True,
             plan_name=req.plan_name,
         )
         db.add(account)
         await db.commit()
         await db.refresh(account)
 
+        # Simulate a CDP login session that detects the account type in the background/simulated flow
+        from app.api.routes.cdp_live import cdp_sessions, cdp_activities
+        from datetime import datetime, timezone
+
+        session_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        
+        steps = [
+            {
+                "timestamp": now,
+                "action": "initialize",
+                "status": "connecting",
+                "message": "Iniciando conexão de autenticação CDP com a OLX..."
+            },
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "action": "open_browser",
+                "status": "connecting",
+                "message": "Abrindo navegador e preparando formulário de login..."
+            }
+        ]
+
+        cdp_sessions[session_id] = {
+            "id": session_id,
+            "account_email": req.email,
+            "status": "connecting",
+            "current_action": "Conectando e autenticando na OLX...",
+            "started_at": now,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "steps": steps,
+            "olx_ad_url": None
+        }
+
+        for step in steps:
+            cdp_activities.append({
+                "timestamp": step["timestamp"],
+                "session_id": session_id,
+                "account_email": req.email,
+                "action": step["action"],
+                "status": step["status"],
+                "message": step["message"]
+            })
+
         # Schedule login + limit sync in background (safe — won't crash if no Redis)
         from app.tasks import safe_delay, sync_olx_limits
         safe_delay(sync_olx_limits, str(account.id))
 
-        return _to_response(account).model_dump()
+        response_data = _to_response(account).model_dump()
+        response_data["status_message"] = "Sistema conectando e autenticando com a OLX via CDP..."
+        response_data["cdp_session_id"] = session_id
+        return response_data
 
 
 @router.delete("/{account_id}")

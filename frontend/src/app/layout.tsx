@@ -1,46 +1,28 @@
-import type { Metadata } from 'next'
-import { ThemeProvider } from '@/components/theme-provider'
-import { Sidebar } from '@/components/sidebar'
-import { Toaster } from 'sonner'
-import './globals.css'
-import { AuthProvider } from '@/lib/auth-context'
+'use client'
 
-export const metadata: Metadata = {
-  title: 'AUTOMATIZA AI',
-  description: 'Sistema de Gestão de Exposição de Anúncios OLX',
-}
+import { AuthProvider } from '@/lib/auth-context'
+import Sidebar from '@/components/sidebar'
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" suppressHydrationWarning>
+    <html lang="pt-BR" className="dark">
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              try {
-                const theme = localStorage.getItem('theme') || 'dark';
-                if (theme === 'dark') document.documentElement.classList.add('dark');
-              } catch (e) {}
-            `,
-          }}
-        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       </head>
-      <body>
-        <ThemeProvider>
-          <AuthProvider>
-            <SidebarWrapper />
-            <main className="flex-1 overflow-x-hidden p-6 lg:p-8 lg:ml-64">
-              {children}
+      <body className="min-h-screen antialiased">
+        <AuthProvider>
+          <div className="flex min-h-screen">
+            <Sidebar />
+            <main className="flex-1 min-w-0">
+              <div className="max-w-7xl mx-auto p-6 md:p-8">
+                {children}
+              </div>
             </main>
-          </AuthProvider>
-          <Toaster position="top-right" richColors />
-        </ThemeProvider>
+          </div>
+        </AuthProvider>
       </body>
     </html>
   )
-}
-
-// Wrapper to include sidebar (it returns null on login page)
-function SidebarWrapper() {
-  return <Sidebar />
 }

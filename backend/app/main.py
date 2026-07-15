@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.core.config import get_settings
 from app.api.routes import (
-    auth, products, accounts, dashboard, variations, publications, chat
+    auth, products, accounts, dashboard, variations, publications, chat, cdp_live
 )
 
 settings = get_settings()
@@ -49,6 +49,7 @@ app.include_router(variations.router, prefix=f"{api_prefix}/variations", tags=["
 app.include_router(publications.router, prefix=f"{api_prefix}/publications", tags=["Publications"])
 app.include_router(chat.router, prefix=f"{api_prefix}/chat", tags=["Chat"])
 app.include_router(dashboard.router, prefix=f"{api_prefix}/dashboard", tags=["Dashboard"])
+app.include_router(cdp_live.router, prefix=f"{api_prefix}/cdp-live", tags=["CDP Live"])
 
 
 @app.get("/")
