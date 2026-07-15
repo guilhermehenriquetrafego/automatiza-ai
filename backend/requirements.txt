@@ -13,7 +13,6 @@ pydantic-settings==2.7.1
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
-psycopg2-binary==2.9.10
 
 # --- Task Queue ---
 celery==5.4.0
@@ -34,7 +33,6 @@ passlib[bcrypt]==1.7.4
 python-dotenv==1.0.1
 loguru==0.7.3
 tenacity==9.0.0
-pydantic-schema-orm==0.0.4
 
 # --- Image Processing ---
 numpy==2.2.1
