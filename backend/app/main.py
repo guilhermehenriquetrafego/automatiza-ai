@@ -5,7 +5,8 @@ AUTOMATIZA AI — FastAPI Application Entry Point
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.core.config import get_settings
@@ -20,19 +21,24 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     logger.info(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} starting...")
     # Initialize database (create tables, install extensions)
-    from app.models import Base, engine
-    async with engine.begin() as conn:
-        # Install pg_trgm for similarity checking
-        from sqlalchemy import text
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""))
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database initialized")
+    try:
+        from app.models import Base, engine
+        async with engine.begin() as conn:
+            from sqlalchemy import text
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""))
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.warning(f"Database init skipped (will retry on first request): {e}")
 
     yield
 
     logger.info("Shutting down...")
-    await engine.dispose()
+    try:
+        await engine.dispose()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -43,7 +49,6 @@ app = FastAPI(
 )
 
 # CORS
-from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
