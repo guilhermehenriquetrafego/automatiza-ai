@@ -28,12 +28,31 @@
     border-color: var(--border-color);
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
   body {
     background: var(--bg-primary);
     color: var(--text-primary);
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  /* Prevent text selection on UI controls */
+  button, nav, aside { 
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Allow text selection in content areas */
+  main, input, textarea, select {
+    -webkit-user-select: auto;
+    user-select: auto;
   }
 
   /* Scrollbar */
@@ -41,6 +60,18 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: #3a3a44; }
+
+  /* Mobile scrollbar — thinner */
+  @media (max-width: 768px) {
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-thumb { background: #2a2a34; }
+  }
+
+  /* Safe area insets for iOS notch */
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-left { padding-left: env(safe-area-inset-left); }
+  .safe-right { padding-right: env(safe-area-inset-right); }
 }
 
 @layer components {
@@ -53,6 +84,14 @@
   }
   .premium-card:hover {
     border-color: #3a3a44;
+  }
+  @media (max-width: 768px) {
+    .premium-card {
+      border-radius: 14px;
+    }
+    .premium-card:active {
+      transform: scale(0.99);
+    }
   }
 
   /* Buttons */
@@ -67,10 +106,14 @@
     align-items: center;
     gap: 8px;
     font-size: 14px;
+    touch-action: manipulation;
   }
   .btn-accent:hover {
     transform: translateY(-1px);
     box-shadow: 0 8px 24px rgba(99, 102, 241, 0.25);
+  }
+  .btn-accent:active {
+    transform: scale(0.97);
   }
   .btn-accent:disabled {
     opacity: 0.5;
@@ -89,11 +132,15 @@
     align-items: center;
     gap: 8px;
     font-size: 14px;
+    touch-action: manipulation;
   }
   .btn-ghost:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
     border-color: #3a3a44;
+  }
+  .btn-ghost:active {
+    transform: scale(0.97);
   }
 
   /* Inputs */
@@ -103,9 +150,15 @@
     border-radius: 10px;
     padding: 12px 16px;
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 16px; /* 16px prevents iOS zoom on focus */
     transition: border-color 0.15s ease;
     width: 100%;
+    touch-action: manipulation;
+  }
+  @media (min-width: 769px) {
+    .premium-input {
+      font-size: 14px;
+    }
   }
   .premium-input::placeholder { color: var(--text-muted); }
   .premium-input:focus {
@@ -170,5 +223,27 @@
   @keyframes slideIn {
     from { opacity: 0; transform: translateX(-12px); }
     to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Mobile drawer animation */
+  .drawer-enter {
+    animation: drawerSlide 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes drawerSlide {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+
+  .overlay-enter {
+    animation: overlayFade 0.2s ease;
+  }
+  @keyframes overlayFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* No-tap-highlight on mobile */
+  a, button, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
   }
 }
