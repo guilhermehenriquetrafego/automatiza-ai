@@ -107,7 +107,7 @@ class User(Base):
 
     # Subscription
     plan_tier = Column(SAEnum(PlanTier), default=PlanTier.starter, nullable=False)
-    plan_expires_at = Column(DateTime, nullable=True)
+    plan_expires_at = Column(DateTime(timezone=True), nullable=True)
     stripe_customer_id = Column(String(255), nullable=True)
 
     # Limits based on plan
@@ -115,8 +115,8 @@ class User(Base):
     max_olx_accounts = Column(Integer, default=1)
 
     is_active = Column(Boolean, default=True)
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_date = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     olx_accounts = relationship("OlxAccount", back_populates="user", cascade="all, delete-orphan")
@@ -134,7 +134,7 @@ class OlxAccount(Base):
     email = Column(String(255), nullable=False)
     # Encrypted session data (cookies, localStorage, tokens) — for CDP session persistence
     session_data_encrypted = Column(Text, nullable=True)
-    session_expires_at = Column(DateTime, nullable=True)
+    session_expires_at = Column(DateTime(timezone=True), nullable=True)
 
     # Account type
     account_type = Column(SAEnum(OlxAccountType), default=OlxAccountType.free, nullable=False)
@@ -151,10 +151,10 @@ class OlxAccount(Base):
     # Status
     is_authenticated = Column(Boolean, default=False)
     needs_reauth = Column(Boolean, default=False)
-    last_limit_sync = Column(DateTime, nullable=True)  # last time we synced limits from OLX
+    last_limit_sync = Column(DateTime(timezone=True), nullable=True)  # last time we synced limits from OLX
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_date = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="olx_accounts")
     publications = relationship("Publication", back_populates="olx_account")
@@ -186,8 +186,8 @@ class Product(Base):
 
     # Status
     is_active = Column(Boolean, default=True)
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_date = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="products")
     images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
@@ -208,7 +208,7 @@ class ProductImage(Base):
     is_primary = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     product = relationship("Product", back_populates="images")
 
@@ -235,7 +235,7 @@ class AdVariation(Base):
     # Status
     status = Column(SAEnum(VariationStatus), default=VariationStatus.draft, nullable=False)
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     product = relationship("Product", back_populates="variations")
     publications = relationship("Publication", back_populates="variation")
@@ -260,16 +260,16 @@ class Publication(Base):
     olx_ad_url = Column(String(500), nullable=True)
 
     # Scheduling
-    scheduled_for = Column(DateTime, nullable=True)  # when the Motor scheduled this
-    posted_at = Column(DateTime, nullable=True)  # when it actually went live
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)  # when the Motor scheduled this
+    posted_at = Column(DateTime(timezone=True), nullable=True)  # when it actually went live
 
     # Status
     status = Column(SAEnum(PublicationStatus), default=PublicationStatus.scheduled, nullable=False)
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_date = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     product = relationship("Product", back_populates="publications")
     variation = relationship("AdVariation", back_populates="publications")
@@ -302,7 +302,7 @@ class ChatMessage(Base):
     # Status
     status = Column(SAEnum(ChatStatus), default=ChatStatus.pending, nullable=False)
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     olx_account = relationship("OlxAccount", back_populates="chat_messages")
 
@@ -321,7 +321,7 @@ class ExposureSchedule(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     olx_account_id = Column(UUID(as_uuid=True), ForeignKey("olx_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    scheduled_time = Column(DateTime, nullable=False)
+    scheduled_time = Column(DateTime(timezone=True), nullable=False)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     variation_id = Column(UUID(as_uuid=True), ForeignKey("ad_variations.id", ondelete="SET NULL"), nullable=True)
 
@@ -331,7 +331,7 @@ class ExposureSchedule(Base):
     is_skipped = Column(Boolean, default=False)
     skip_reason = Column(String(300), nullable=True)
 
-    created_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_date = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     olx_account = relationship("OlxAccount", back_populates="schedule_entries")
 
@@ -358,6 +358,6 @@ class PerformanceMetric(Base):
     posted_hour = Column(Integer, nullable=True)
     posted_weekday = Column(Integer, nullable=True)  # 0=Monday, 6=Sunday
 
-    measured_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    measured_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     publication = relationship("Publication", back_populates="metrics")
