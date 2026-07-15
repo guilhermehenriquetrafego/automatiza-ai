@@ -499,6 +499,133 @@ class StealthBrowser:
         logger.debug(f"Typed {len(text)} chars into {selector}")
         await self._human_delay()
 
+    async def type_text_react(self, selector: str, text: str, per_char_delay: tuple = (0.03, 0.12)):
+        """Type text into a React controlled input. Dispatches proper events that React recognizes."""
+        # Focus the element first
+        await self.click(selector)
+        await asyncio.sleep(0.2)
+
+        # Clear any existing text first
+        await self._evaluate_js(f"""
+            (() => {{
+                const el = document.querySelector({json.dumps(selector)});
+                if (el) {{
+                    el.focus();
+                    el.select();
+                }}
+            }})()
+        """)
+        # Send Ctrl+A to select all, then Delete
+        await self._cdp.send("Input.dispatchKeyEvent", {
+            "type": "keyDown",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 2,  # Ctrl
+        }, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {
+            "type": "keyUp",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 2,
+        }, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {
+            "type": "keyDown",
+            "key": "Backspace",
+            "code": "Backspace",
+            "windowsVirtualKeyCode": 8,
+        }, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {
+            "type": "keyUp",
+            "key": "Backspace",
+            "code": "Backspace",
+            "windowsVirtualKeyCode": 8,
+        }, session_id=self._session_id)
+        await asyncio.sleep(0.1)
+
+        for char in text:
+            await self._cdp.send("Input.dispatchKeyEvent", {
+                "type": "keyDown",
+                "text": char,
+            }, session_id=self._session_id)
+            await self._cdp.send("Input.dispatchKeyEvent", {
+                "type": "keyUp",
+                "text": char,
+            }, session_id=self._session_id)
+            # Log-normal delay between keystrokes (more natural than uniform)
+            delay = self._log_normal_delay(per_char_delay[0], per_char_delay[1])
+            await asyncio.sleep(delay)
+
+        # Dispatch input and change events that React listens to
+        await self._evaluate_js(f"""
+            (() => {{
+                const el = document.querySelector({json.dumps(selector)});
+                if (el) {{
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }}
+            }})()
+        """)
+
+        logger.debug(f"Typed {len(text)} chars into {selector} (React mode)")
+        await self._human_delay()
+
+    async def accept_cookies(self, timeout: float = 5.0):
+        """Dismiss cookie consent modal if present."""
+        try:
+            start = time.time()
+            while time.time() - start < timeout:
+                exists = await self._evaluate_js("""
+                    (() => {
+                        // Try common cookie consent button selectors
+                        const selectors = [
+                            'button[class*="adopt"] button:last-child',
+                            'button[class*="accept"]',
+                            'button[class*="cookie"] button:last-child',
+                            '[class*="consent"] button:last-child',
+                            '#onetrust-accept-btn-handler',
+                            'button:has-text("Aceitar")',
+                        ];
+                        for (const sel of selectors) {
+                            try {
+                                const btn = document.querySelector(sel);
+                                if (btn) return true;
+                            } catch(e) {}
+                        }
+                        // Try by text content
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            if (btn.textContent && btn.textContent.trim().includes('Aceitar')) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    })()
+                """)
+                if exists:
+                    # Click the accept button via JS
+                    await self._evaluate_js("""
+                        (() => {
+                            const buttons = document.querySelectorAll('button');
+                            for (const btn of buttons) {
+                                if (btn.textContent && btn.textContent.trim().includes('Aceitar')) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        })()
+                    """)
+                    logger.info("Cookie consent accepted")
+                    await asyncio.sleep(1)
+                    return True
+                await asyncio.sleep(0.5)
+            return False
+        except Exception:
+            return False
+
     async def upload_file(self, selector: str, file_path: str):
         """
         Upload a file by intercepting the file chooser dialog via CDP.
@@ -547,6 +674,17 @@ class StealthBrowser:
             await asyncio.sleep(0.5)
         raise CDPError(f"Selector timeout: {selector}")
 
+    async def wait_for_navigation(self, timeout: float = 15.0):
+        """Wait for page navigation to complete."""
+        start = time.time()
+        while time.time() - start < timeout:
+            result = await self._evaluate_js("document.readyState")
+            ready = result.get("result", {}).get("value")
+            if ready == "complete":
+                return
+            await asyncio.sleep(0.3)
+        raise CDPError(f"Navigation timeout after {timeout}s")
+
     async def get_text(self, selector: str) -> Optional[str]:
         """Get the text content of an element."""
         result = await self._evaluate_js(f"""
@@ -556,6 +694,11 @@ class StealthBrowser:
             }})()
         """)
         return result.get("result", {}).get("value") if result else None
+
+    async def get_current_url(self) -> str:
+        """Get the current page URL."""
+        result = await self._evaluate_js("window.location.href")
+        return result.get("result", {}).get("value", "")
 
     async def screenshot(self) -> bytes:
         """Take a screenshot of the current page."""

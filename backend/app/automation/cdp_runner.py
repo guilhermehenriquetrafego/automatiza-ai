@@ -8,11 +8,20 @@ and the CDP Live monitoring page. When a CDP action is triggered, this runner:
   2. Runs the real CDP automation step by step
   3. Updates the session status in real-time
   4. Logs all activity for the history feed
+
+Selectors verified against real OLX pages via Browserbase (15/07/2026):
+  - Login URL: https://conta.olx.com.br/
+  - Email field: form input (first input inside form)
+  - Continue button: form button
+  - Multi-step: email → Continuar → password → Continuar
+  - React controlled inputs (need type_text_react)
+  - Cookie consent: button text "Aceitar"
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -20,12 +29,23 @@ from loguru import logger
 
 from app.api.routes.cdp_live import cdp_sessions, cdp_activities
 
+# Real OLX URLs (verified 15/07/2026)
+OLX_LOGIN_URL = "https://conta.olx.com.br/"
+OLX_MY_ADS_URL = "https://www.olx.com.br/conta/meusanuncios"
+
 
 async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
     """
     Run a REAL CDP login on OLX.
-    Launches Chromium, navigates to OLX, fills credentials, detects account type.
-    All steps are visible in real-time on the CDP Live page.
+    Uses the multi-step login flow discovered via Browserbase:
+      1. Navigate to conta.olx.com.br
+      2. Accept cookies
+      3. Type email in form input (React controlled)
+      4. Click Continuar (form button)
+      5. Wait for password field
+      6. Type password
+      7. Click Continuar
+      8. Wait for redirect to www.olx.com.br (success)
     """
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -71,102 +91,158 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
         await browser.launch()
         add_step("browser_ready", "success", "Chromium iniciado com anti-detecção ativa")
 
-        # Navigate to OLX login
-        add_step("navigate_login", "running", "Navegando para https://www.olx.com.br/entrar")
-        await browser.navigate("https://www.olx.com.br/entrar")
-        add_step("page_loaded", "success", "Página de login carregada")
+        # Step 1: Navigate to OLX login (real URL)
+        add_step("navigate_login", "running", f"Navegando para {OLX_LOGIN_URL}")
+        await browser.navigate(OLX_LOGIN_URL)
+        await asyncio.sleep(2)
+        add_step("page_loaded", "success", "Página de login carregada (conta.olx.com.br)")
 
-        # Wait for email field
+        # Step 2: Accept cookies
+        add_step("accept_cookies", "running", "Procurando cookie consent...")
+        if hasattr(browser, 'accept_cookies'):
+            accepted = await browser.accept_cookies(timeout=5.0)
+            add_step("cookies_done", "success" if accepted else "running", 
+                     "Cookies aceitos" if accepted else "Nenhum cookie modal encontrado")
+        else:
+            add_step("cookies_done", "running", "Cookie handler não disponível")
+
+        # Step 3: Wait for email field (form input)
         add_step("find_email_field", "running", "Procurando campo de email...")
-        await browser.wait_for_selector("input[name='email'], input[type='email'], #email", timeout=10.0)
-        add_step("email_field_found", "success", "Campo de email encontrado")
+        await browser.wait_for_selector("form input", timeout=10.0)
+        add_step("email_field_found", "success", "Campo de email encontrado (form input)")
 
-        # Type email (human-like)
+        # Step 4: Type email using React-compatible method
         add_step("type_email", "running", f"Digitando email: {email}")
-        await browser.type_text("input[name='email'], input[type='email'], #email", email)
-        add_step("email_typed", "success", "Email preenchido")
+        if hasattr(browser, 'type_text_react'):
+            await browser.type_text_react("form input", email)
+        else:
+            await browser.type_text("form input", email)
+        add_step("email_typed", "success", "Email preenchido (React mode)")
 
-        # Click continue
+        # Step 5: Click "Continuar" button
         add_step("click_continue", "running", "Clicando em Continuar...")
-        await browser.click("button[type='submit'], button[data-testid='login-button']")
-        add_step("continue_clicked", "success", "Botão Continuar clicado")
+        await browser.click("form button")
+        add_step("continue_clicked", "success", "Botão Continuar clicado (etapa email)")
 
-        # Wait for password field
+        # Step 6: Wait for password field
         add_step("find_password_field", "running", "Aguardando campo de senha...")
-        await browser.wait_for_selector("input[name='password'], input[type='password'], #password", timeout=10.0)
-        add_step("password_field_found", "success", "Campo de senha encontrado")
+        await asyncio.sleep(2)  # Give React time to transition
 
-        # Type password
+        password_selector = None
+        for selector in [
+            "input[type='password']",
+            "input#input-2",
+            "input#input-1",  # Same field, repurposed by React
+            "form input",
+        ]:
+            try:
+                await browser.wait_for_selector(selector, timeout=5.0)
+                password_selector = selector
+                break
+            except CDPError:
+                continue
+
+        if not password_selector:
+            # Check for error message (invalid email)
+            try:
+                error_text = await browser.get_text("[class*='error'], [class*='Error'], [role='alert']")
+                if error_text:
+                    add_step("login_error", "error", f"Erro da OLX: {error_text}")
+                else:
+                    add_step("login_error", "error", "Campo de senha não encontrado — email pode estar inválido")
+            except Exception:
+                add_step("login_error", "error", "Campo de senha não encontrado")
+            cdp_sessions[session_id]["status"] = "error"
+            return cdp_sessions[session_id]
+
+        add_step("password_field_found", "success", f"Campo de senha encontrado ({password_selector})")
+
+        # Step 7: Type password
         add_step("type_password", "running", "Digitando senha...")
-        await browser.type_text("input[name='password'], input[type='password'], #password", password)
+        if hasattr(browser, 'type_text_react'):
+            await browser.type_text_react(password_selector, password)
+        else:
+            await browser.type_text(password_selector, password)
         add_step("password_typed", "success", "Senha preenchida")
 
-        # Submit
+        # Step 8: Click "Continuar" to submit
         add_step("submit_login", "running", "Enviando formulário de login...")
-        await browser.click("button[type='submit'], button[data-testid='login-button']")
+        await browser.click("form button")
 
-        # Wait for redirect (success) or error
+        # Step 9: Wait for redirect to www.olx.com.br (success indicator)
         add_step("wait_redirect", "running", "Aguardando redirecionamento...")
+        login_success = False
+        
         try:
-            await browser.wait_for_selector(
-                "[data-testid='dashboard'], .user-info, #my-account, "
-                "[data-testid='user-menu'], nav[aria-label='Menu']",
-                timeout=15.0
-            )
-            add_step("login_success", "success", "Login realizado! Redirecionamento confirmado")
-            cdp_sessions[session_id]["status"] = "success"
+            start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start < 15.0:
+                if hasattr(browser, 'get_current_url'):
+                    current_url = await browser.get_current_url()
+                    if current_url and "conta.olx.com.br" not in current_url:
+                        login_success = True
+                        break
+                await asyncio.sleep(1)
 
-            # Detect account type
-            add_step("detect_account_type", "running", "Detectando tipo de conta (profissional vs gratuita)...")
-            await browser.navigate("https://www.olx.com.br/conta/meusanuncios")
-            await asyncio.sleep(3)
+            if login_success:
+                add_step("login_success", "success", "Login realizado! Redirecionado para www.olx.com.br")
+                cdp_sessions[session_id]["status"] = "success"
 
-            # Try to detect if it's a professional account
-            try:
-                page_text = await browser.get_text("body")
-                is_professional = any(keyword in page_text.lower() for keyword in [
-                    "profissional", "plano profissional", "assinatura",
-                    "inserções profissionais", "anúncios profissionais"
-                ])
+                # Detect account type by navigating to my ads page
+                add_step("detect_account_type", "running", "Detectando tipo de conta...")
+                await browser.navigate(OLX_MY_ADS_URL)
+                await asyncio.sleep(3)
 
-                # Try to extract limit numbers
-                import re
-                numbers = re.findall(r'\d+', page_text.replace('.', ''))
+                try:
+                    page_text = await browser.get_text("body") or ""
+                    page_lower = page_text.lower()
+                    
+                    is_professional = any(kw in page_lower for kw in [
+                        "profissional", "plano profissional", "assinatura",
+                        "inserções profissionais", "anúncios profissionais",
+                        "plano pago", "plano pro",
+                    ])
+                    
+                    account_type_str = "PROFISSIONAL" if is_professional else "GRATUITA"
+                    add_step("account_type_detected", "success", f"Conta identificada como {account_type_str}")
 
-                if is_professional:
-                    add_step("account_type_detected", "success", "Conta identificada como PROFISSIONAL")
-                else:
-                    add_step("account_type_detected", "success", "Conta identificada como GRATUITA")
-            except Exception:
-                add_step("account_type_detected", "success", "Tipo de conta detectado")
+                    # Try to extract limit numbers
+                    numbers = re.findall(r'\d+', page_text.replace('.', ''))
+                    add_step("limits_detected", "success", f"Encontrados {len(numbers)} valores numéricos na página")
 
-            # Update database
-            from app.models import async_session, OlxAccount, OlxAccountType
-            async with async_session() as db:
-                account = await db.get(OlxAccount, uuid.UUID(account_id))
-                if account:
-                    account.is_authenticated = True
-                    account.needs_reauth = False
-                    if is_professional:
-                        account.account_type = OlxAccountType.professional
-                    else:
-                        account.account_type = OlxAccountType.free
-                    await db.commit()
+                except Exception as e:
+                    add_step("account_type_detected", "success", f"Tipo de conta detectado (erro na leitura: {e})")
 
-            add_step("db_updated", "success", "Conta atualizada no banco de dados")
+                # Update database
+                from app.models import async_session, OlxAccount, OlxAccountType
+                async with async_session() as db:
+                    account = await db.get(OlxAccount, uuid.UUID(account_id))
+                    if account:
+                        account.is_authenticated = True
+                        account.needs_reauth = False
+                        account.last_login_at = datetime.now(timezone.utc)
+                        if is_professional:
+                            account.account_type = OlxAccountType.professional
+                        else:
+                            account.account_type = OlxAccountType.free
+                        await db.commit()
 
-        except Exception:
-            add_step("login_failed", "error", "Login falhou — credenciais incorretas ou captcha necessário")
+                add_step("db_updated", "success", "Conta atualizada no banco de dados")
+
+            else:
+                add_step("login_failed", "error", "Login falhou — sem redirecionamento após 15s (credenciais incorretas ou captcha)")
+                cdp_sessions[session_id]["status"] = "error"
+
+                from app.models import async_session, OlxAccount
+                async with async_session() as db:
+                    account = await db.get(OlxAccount, uuid.UUID(account_id))
+                    if account:
+                        account.needs_reauth = True
+                        account.is_authenticated = False
+                        await db.commit()
+
+        except Exception as e:
+            add_step("login_failed", "error", f"Erro no redirecionamento: {str(e)}")
             cdp_sessions[session_id]["status"] = "error"
-
-            # Mark account as needing reauth
-            from app.models import async_session, OlxAccount
-            async with async_session() as db:
-                account = await db.get(OlxAccount, uuid.UUID(account_id))
-                if account:
-                    account.needs_reauth = True
-                    account.is_authenticated = False
-                    await db.commit()
 
     except Exception as e:
         logger.error(f"CDP login failed: {e}")
@@ -187,6 +263,7 @@ async def run_cdp_sync_limits(account_id: str, email: str) -> dict:
     """
     Run a REAL CDP limit sync on OLX.
     Navigates to the account's ads page and scrapes current limits.
+    Uses session persistence (cookies) from previous login.
     """
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -223,7 +300,7 @@ async def run_cdp_sync_limits(account_id: str, email: str) -> dict:
 
     browser = None
     try:
-        from app.automation.cdp.stealth_browser import StealthBrowser
+        from app.automation.cdp.stealth_browser import StealthBrowser, CDPError
 
         add_step("initialize", "running", f"Iniciando sync para {email}")
 
@@ -232,54 +309,92 @@ async def run_cdp_sync_limits(account_id: str, email: str) -> dict:
         add_step("browser_ready", "success", "Chromium iniciado")
 
         # Navigate to my ads page
-        add_step("navigate_ads", "running", "Navegando para https://www.olx.com.br/conta/meusanuncios")
-        await browser.navigate("https://www.olx.com.br/conta/meusanuncios")
+        add_step("navigate_ads", "running", f"Navegando para {OLX_MY_ADS_URL}")
+        await browser.navigate(OLX_MY_ADS_URL)
         await asyncio.sleep(3)
         add_step("page_loaded", "success", "Página de anúncios carregada")
 
         # Check if we're authenticated (not redirected to login)
         add_step("check_auth", "running", "Verificando autenticação...")
-        try:
-            await browser.wait_for_selector(
-                "[data-testid='ad-list'], .ad-card, .my-ads, [data-testid='my-ads']",
-                timeout=10.0
-            )
-            add_step("authenticated", "success", "Sessão autenticada")
-        except Exception:
-            add_step("auth_failed", "error", "Não autenticado — precisa fazer login primeiro")
+        current_url = ""
+        if hasattr(browser, 'get_current_url'):
+            current_url = await browser.get_current_url()
+        
+        is_authenticated = "conta.olx.com.br" not in current_url and "entrar" not in current_url.lower()
+        
+        if is_authenticated:
+            add_step("authenticated", "success", "Sessão autenticada (cookies válidos)")
+        else:
+            add_step("auth_failed", "error", "Sessão expirada — redirecionado para login")
             cdp_sessions[session_id]["status"] = "error"
+            
+            # Mark account as needing reauth
+            from app.models import async_session, OlxAccount
+            async with async_session() as db:
+                account = await db.get(OlxAccount, uuid.UUID(account_id))
+                if account:
+                    account.needs_reauth = True
+                    await db.commit()
+            
             return cdp_sessions[session_id]
 
-        # Scrape limit info
+        # Scrape limit information
         add_step("scrape_limits", "running", "Extraindo informações de limite...")
-        import re
-        page_text = await browser.get_text("body")
-
-        # Try to find limit numbers like "45 de 250 anúncios"
-        numbers = re.findall(r'\d+', page_text.replace('.', ''))
-        add_step("limits_parsed", "success", f"Encontrados {len(numbers)} valores numéricos na página")
+        
+        # Get page text and look for limit patterns
+        page_text = await browser.get_text("body") or ""
+        
+        # Parse limit patterns: "X de Y", "X/Y", "X inserções", etc.
+        limit_match = re.search(r'(\d+)\s*(?:de|dos?|\/)\s*(\d+)', page_text.replace('.', ''))
+        if limit_match:
+            used = int(limit_match.group(1))
+            total = int(limit_match.group(2))
+            remaining = max(0, total - used)
+            add_step("limits_parsed", "success", f"Limites: {used}/{total} usados, {remaining} restantes")
+        else:
+            # Count numbers on page as fallback
+            numbers = re.findall(r'\d+', page_text.replace('.', ''))
+            add_step("limits_parsed", "success", f"Encontrados {len(numbers)} valores numéricos na página")
 
         # Count active ads
         add_step("count_ads", "running", "Contando anúncios ativos...")
-        try:
-            ad_count = await browser._evaluate_js("""
-                () => document.querySelectorAll('[data-testid="ad-card"], .ad-card, .sc-eJwQxX, article').length
-            """)
-            add_step("ads_counted", "success", f"{ad_count} anúncios encontrados na página")
-        except Exception:
+        result = await browser._evaluate_js("""
+            (() => {
+                const selectors = [
+                    '[data-testid="ad-card"]',
+                    '[data-testid*="ad-card"]',
+                    '.ad-card',
+                    '[class*="ad-card"]',
+                    '[class*="AdCard"]',
+                    '[data-testid="ad-list"] > *',
+                    'section[class*="ad"]',
+                    'article',
+                ];
+                for (const sel of selectors) {
+                    const elements = document.querySelectorAll(sel);
+                    if (elements.length > 0) return elements.length;
+                }
+                return 0;
+            })()
+        """)
+        
+        ad_count = result.get("result", {}).get("value", 0) if result else 0
+        if isinstance(ad_count, dict):
             ad_count = 0
-            add_step("ads_counted", "success", "Contagem falhou, usando fallback")
+        add_step("ads_counted", "success", f"{ad_count} anúncios encontrados na página")
 
         # Update database
         from app.models import async_session, OlxAccount
         async with async_session() as db:
             account = await db.get(OlxAccount, uuid.UUID(account_id))
             if account:
-                if numbers and len(numbers) >= 2:
-                    account.used_this_month = int(numbers[0])
-                    account.total_monthly_limit = int(numbers[1])
-                    account.remaining_this_month = max(0, int(numbers[1]) - int(numbers[0]))
                 account.last_limit_sync = datetime.now(timezone.utc)
+                if limit_match:
+                    account.total_monthly_limit = total
+                    account.used_this_month = used
+                    account.remaining_this_month = remaining
+                else:
+                    account.used_this_month = int(ad_count) if ad_count else 0
                 await db.commit()
 
         add_step("sync_complete", "success", "Limites sincronizados com sucesso")
@@ -300,16 +415,10 @@ async def run_cdp_sync_limits(account_id: str, email: str) -> dict:
     return cdp_sessions[session_id]
 
 
-async def run_cdp_post_ad(
-    account_id: str,
-    email: str,
-    product_data: dict,
-    variation_data: dict,
-    image_paths: list[str] | None = None
-) -> dict:
+async def run_cdp_post_ad(account_id: str, email: str, product_data: dict) -> dict:
     """
     Run a REAL CDP ad posting on OLX.
-    Navigates to the ad creation form, fills all fields, uploads images, submits.
+    Navigates to the post ad form, fills all fields, and submits.
     """
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -318,7 +427,7 @@ async def run_cdp_post_ad(
         "id": session_id,
         "account_email": email,
         "status": "posting",
-        "current_action": "Iniciando postagem de anúncio...",
+        "current_action": "Iniciando postagem...",
         "started_at": now,
         "last_updated": now,
         "steps": [],
@@ -346,171 +455,90 @@ async def run_cdp_post_ad(
 
     browser = None
     try:
-        from app.automation.cdp.stealth_browser import StealthBrowser
+        from app.automation.cdp.stealth_browser import StealthBrowser, CDPError
 
         add_step("initialize", "running", f"Iniciando postagem para {email}")
-        add_step("product_info", "success", f"Produto: {product_data.get('title', 'N/A')}")
 
         browser = StealthBrowser(headless=True)
         await browser.launch()
-        add_step("browser_ready", "success", "Chromium iniciado com stealth")
+        add_step("browser_ready", "success", "Chromium iniciado")
 
-        # Navigate to ad creation
+        # Navigate to post ad page
         add_step("navigate_post", "running", "Navegando para https://www.olx.com.br/criar-anuncio")
         await browser.navigate("https://www.olx.com.br/criar-anuncio")
         await asyncio.sleep(3)
-        add_step("page_loaded", "success", "Formulário de anúncio carregado")
+        add_step("page_loaded", "success", "Página de postagem carregada")
+
+        # Accept cookies if present
+        if hasattr(browser, 'accept_cookies'):
+            await browser.accept_cookies(timeout=3.0)
 
         # Select category
-        category = product_data.get("category", "celulares_e_telefonia")
+        category = product_data.get("category", "Celulares")
         add_step("select_category", "running", f"Selecionando categoria: {category}")
-        try:
-            # OLX category selection is a multi-step process
-            # We need to click through the category tree
-            category_selectors = {
-                "celulares_e_telefonia": "Celulares e Telefonia",
-                "informatica": "Informática",
-                "games": "Games",
-                "audio": "Áudio",
-                "tvs_e_video": "TVs e Vídeo",
-                "cameras_e_drones": "Câmeras e Drones",
-            }
-            category_label = category_selectors.get(category, category)
-            await browser._evaluate_js(f"""
-                () => {{
-                    const links = document.querySelectorAll('a, button, [role="button"]');
-                    for (const el of links) {{
-                        if (el.textContent.includes('{category_label}')) {{
-                            el.click();
-                            return true;
-                        }}
+        await browser._evaluate_js(f"""
+            (() => {{
+                const links = document.querySelectorAll('a, button, [role="button"]');
+                for (const link of links) {{
+                    if (link.textContent && link.textContent.includes({json.dumps(category)})) {{
+                        link.click();
+                        return true;
                     }}
-                    return false;
                 }}
-            """)
-            await asyncio.sleep(2)
-            add_step("category_selected", "success", f"Categoria selecionada: {category_label}")
-        except Exception as e:
-            add_step("category_select_failed", "error", f"Erro ao selecionar categoria: {e}")
+                return false;
+            }})()
+        """)
+        await asyncio.sleep(2)
+        add_step("category_selected", "success", f"Categoria {category} selecionada")
 
         # Fill title
-        title = variation_data.get("title", product_data.get("title", ""))
+        title = product_data.get("title", "")
         add_step("fill_title", "running", f"Digitando título: {title[:50]}...")
-        try:
-            await browser.wait_for_selector("input[name='title'], #title, [data-testid='title-input']", timeout=10.0)
-            await browser.type_text("input[name='title'], #title, [data-testid='title-input']", title)
-            add_step("title_filled", "success", "Título preenchido")
-        except Exception as e:
-            add_step("title_failed", "error", f"Erro ao preencher título: {e}")
+        await browser.wait_for_selector("form input, input[name='title'], #title", timeout=10.0)
+        if hasattr(browser, 'type_text_react'):
+            await browser.type_text_react("form input, input[name='title'], #title", title)
+        else:
+            await browser.type_text("form input, input[name='title'], #title", title)
+        add_step("title_filled", "success", "Título preenchido")
 
         # Fill description
-        description = variation_data.get("description", product_data.get("description", ""))
-        add_step("fill_description", "running", "Digitando descrição...")
-        try:
-            await browser.wait_for_selector("textarea[name='description'], #description, [data-testid='description-input']", timeout=5.0)
-            await browser.type_text("textarea[name='description'], #description, [data-testid='description-input']", description)
-            add_step("description_filled", "success", "Descrição preenchida")
-        except Exception as e:
-            add_step("description_failed", "error", f"Erro ao preencher descrição: {e}")
+        description = product_data.get("description", "")
+        add_step("fill_desc", "running", "Digitando descrição...")
+        await browser.wait_for_selector("textarea, [name='description'], #description", timeout=5.0)
+        if hasattr(browser, 'type_text_react'):
+            await browser.type_text_react("textarea, [name='description'], #description", description)
+        else:
+            await browser.type_text("textarea, [name='description'], #description", description)
+        add_step("desc_filled", "success", "Descrição preenchida")
 
         # Fill price
-        price = product_data.get("price", 0)
-        add_step("fill_price", "running", f"Digitando preço: R$ {price}")
-        try:
-            await browser.type_text("input[name='price'], #price, [data-testid='price-input']", str(price).replace('.', ','))
+        price = product_data.get("price", "")
+        if price:
+            add_step("fill_price", "running", f"Digitando preço: {price}")
+            await browser.wait_for_selector("input[name='price'], #price, input[placeholder*='preço']", timeout=5.0)
+            if hasattr(browser, 'type_text_react'):
+                await browser.type_text_react("input[name='price'], #price", str(price))
+            else:
+                await browser.type_text("input[name='price'], #price", str(price))
             add_step("price_filled", "success", "Preço preenchido")
-        except Exception as e:
-            add_step("price_failed", "error", f"Erro ao preencher preço: {e}")
 
-        # Fill brand and model if available
-        if product_data.get("brand"):
-            add_step("fill_brand", "running", f"Marca: {product_data['brand']}")
-            try:
-                await browser.type_text("input[name='brand'], #brand, [data-testid='brand-input']", product_data["brand"])
-                add_step("brand_filled", "success", "Marca preenchida")
-            except Exception:
-                pass
+        # Submit
+        add_step("submit_ad", "running", "Enviando anúncio...")
+        await browser.click("button[type='submit'], form button")
+        await asyncio.sleep(3)
 
-        # Select condition
-        condition = product_data.get("condition", "novo")
-        add_step("select_condition", "running", f"Condição: {condition}")
-        try:
-            condition_map = {"novo": "Novo", "seminovo": "Seminovo", "usado": "Usado"}
-            condition_label = condition_map.get(condition, "Novo")
-            await browser._evaluate_js(f"""
-                () => {{
-                    const els = document.querySelectorAll('[role="radio"], input[type="radio"], label');
-                    for (const el of els) {{
-                        if (el.textContent && el.textContent.includes('{condition_label}')) {{
-                            el.click();
-                            return true;
-                        }}
-                    }}
-                    return false;
-                }}
-            """)
-            add_step("condition_selected", "success", f"Condição: {condition_label}")
-        except Exception:
-            pass
-
-        # Upload images if provided
-        if image_paths:
-            add_step("upload_images", "running", f"Enviando {len(image_paths)} imagem(s)...")
-            try:
-                # Use CDP to set files for the file input
-                file_input = "input[type='file'], [data-testid='image-upload']"
-                await browser.wait_for_selector(file_input, timeout=5.0)
-                # The actual file upload via CDP requires special handling
-                add_step("images_uploaded", "success", "Imagens enviadas")
-            except Exception as e:
-                add_step("image_upload_failed", "error", f"Erro ao enviar imagens: {e}")
-        else:
-            add_step("skip_images", "success", "Sem imagens para enviar")
-
-        # Submit the form
-        add_step("submit_ad", "running", "Enviando formulário...")
-        try:
-            await browser.click("button[type='submit'], button[data-testid='submit-ad'], button:has(span:contains('Publicar'))")
-            await asyncio.sleep(5)
-            add_step("ad_submitted", "success", "Anúncio enviado! Aguardando confirmação...")
-
-            # Try to get the ad URL
-            try:
-                current_url = await browser._evaluate_js("() => window.location.href")
-                if "olx.com.br" in str(current_url) and "criar-anuncio" not in str(current_url):
-                    cdp_sessions[session_id]["olx_ad_url"] = str(current_url)
-                    add_step("ad_published", "success", f"Anúncio publicado: {current_url}")
-                else:
-                    add_step("ad_published", "success", "Anúncio publicado com sucesso!")
-            except Exception:
-                add_step("ad_published", "success", "Anúncio publicado!")
-
+        # Check result
+        current_url = await browser.get_current_url() if hasattr(browser, 'get_current_url') else ""
+        if "olx.com.br" in current_url and "criar-anuncio" not in current_url:
+            add_step("ad_posted", "success", f"Anúncio postado! URL: {current_url}")
             cdp_sessions[session_id]["status"] = "success"
-
-            # Update publication in database
-            from app.models import async_session, Publication, PublicationStatus
-            async with async_session() as db:
-                # Find the publication by variation
-                from sqlalchemy import select
-                result = await db.execute(
-                    select(Publication).where(
-                        Publication.variation_id == variation_data.get("id")
-                    )
-                )
-                pub = result.scalars().first()
-                if pub:
-                    pub.status = PublicationStatus.posted
-                    pub.posted_at = datetime.now(timezone.utc)
-                    if cdp_sessions[session_id]["olx_ad_url"]:
-                        pub.olx_ad_url = cdp_sessions[session_id]["olx_ad_url"]
-                    await db.commit()
-
-        except Exception as e:
-            add_step("submit_failed", "error", f"Erro ao enviar: {e}")
+            cdp_sessions[session_id]["olx_ad_url"] = current_url
+        else:
+            add_step("post_failed", "error", "Postagem falhou — ainda no formulário")
             cdp_sessions[session_id]["status"] = "error"
 
     except Exception as e:
-        logger.error(f"CDP post_ad failed: {e}")
+        logger.error(f"CDP post ad failed: {e}")
         add_step("error", "error", f"Erro: {str(e)}")
         cdp_sessions[session_id]["status"] = "error"
     finally:

@@ -3,12 +3,20 @@ AUTOMATIZA AI — OLX Automation
 All OLX interactions via CDP. No API. No exceptions.
 
 Functions:
-  1. login(email, password) — authenticate on OLX
+  1. login(email, password) — authenticate on OLX (multi-step: email → continue → password → submit)
   2. post_ad(variation, product, account) — publish an ad
   3. sync_limits(account) — scrape current ad limits from account dashboard
   4. check_ad_status(ad_id) — verify if ad is online
   5. read_chat_messages() — scrape incoming chat messages
   6. send_chat_reply(conversation_id, message) — respond to a chat
+
+Selectors discovered via Browserbase against real OLX pages (15/07/2026):
+  - Login URL: https://conta.olx.com.br/
+  - Email field: form input (input#input-1)
+  - Continue button: form button
+  - Cookie consent: button containing "Aceitar"
+  - Login is multi-step: email → click Continuar → password → click Continuar
+  - React controlled inputs (need type_text_react with proper event dispatching)
 """
 
 from __future__ import annotations
@@ -17,7 +25,7 @@ import asyncio
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from loguru import logger
 
@@ -31,13 +39,36 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-# OLX URLs
-OLX_LOGIN_URL = "https://www.olx.com.br/entrar"
+# OLX URLs (verified against real OLX 15/07/2026)
+OLX_LOGIN_URL = "https://conta.olx.com.br/"
 OLX_DASHBOARD_URL = "https://www.olx.com.br/conta/meuposicionamento"
 OLX_POST_AD_URL = "https://www.olx.com.br/criar-anuncio"
 OLX_AD_LIMITS_URL = "https://www.olx.com.br/conta/meusanuncios"
 OLX_CHAT_URL = "https://www.olx.com.br/conta/mensagens"
-OLX_FREE_LIMITS_HELP = "https://ajuda.olx.com.br/s/article/anuncio-pago-e-limites-de-insercao-gratuita"
+OLX_HOME_URL = "https://www.olx.com.br"
+
+# Real selectors discovered via Browserbase
+OLX_SELECTORS = {
+    # Login page (conta.olx.com.br)
+    "login_email_input": "form input",
+    "login_continue_btn": "form button",
+    "login_password_input": "form input[type='password'], input#input-2, form input",
+    "login_error": "[class*='error'], [class*='Error'], [role='alert']",
+    # Cookie consent
+    "cookie_accept": "button",  # Text content matching "Aceitar"
+    # My ads page
+    "ads_list": "[data-testid='ad-list'], .ad-card, [data-testid*='ad-card'], section[class*='ad']",
+    "ads_count": "[data-testid='active-count'], .listing-count, [class*='count']",
+    "limit_text": "[data-testid='ad-limit-text'], .ad-limit-info, .plan-usage, [class*='limit']",
+    # Post ad page
+    "post_title_input": "input[name='title'], #title, input[placeholder*='título'], form input",
+    "post_desc_input": "textarea[name='description'], #description, textarea",
+    "post_price_input": "input[name='price'], #price, input[placeholder*='preço']",
+    "post_submit_btn": "button[type='submit'], button[data-testid='submit'], form button",
+    # Chat
+    "chat_list": "[data-testid='chat-list'], .chat-list, [class*='conversation']",
+    "chat_msg": "[data-testid='message'], .message, [class*='message']",
+}
 
 
 class OlxAutomation:
@@ -65,7 +96,7 @@ class OlxAutomation:
         session_data = await self.browser.save_session()
         from app.core.security import encrypt_session
         self.account.session_data_encrypted = encrypt_session(json.dumps(session_data))
-        self.account.session_expires_at = datetime.now(timezone.utc) + asyncio.timedelta(days=30)
+        self.account.session_expires_at = datetime.now(timezone.utc) + timedelta(days=30)
         await self.db.commit()
         await self.browser.close()
 
@@ -74,54 +105,138 @@ class OlxAutomation:
     # ============================================================
 
     async def login(self, email: str, password: str) -> bool:
-        """Login to OLX. Returns True if successful."""
+        """
+        Login to OLX using the multi-step flow.
+        
+        Step 1: Navigate to conta.olx.com.br
+        Step 2: Accept cookies if present
+        Step 3: Type email in form input
+        Step 4: Click "Continuar" (form button)
+        Step 5: Wait for password field to appear
+        Step 6: Type password
+        Step 7: Click "Continuar" again
+        Step 8: Wait for redirect to www.olx.com.br (success indicator)
+        """
         logger.info(f"Logging into OLX as {email}")
 
+        # Step 1: Navigate to login page
         await self.browser.navigate(OLX_LOGIN_URL)
+        await asyncio.sleep(2)
 
-        # Wait for and fill email field
-        await self.browser.wait_for_selector("input[name='email'], input[type='email'], #email")
-        await self.browser.type_text("input[name='email'], input[type='email'], #email", email)
+        # Step 2: Accept cookies if present
+        await self.browser.accept_cookies(timeout=5.0)
 
-        # Click "Continue" or "Entrar"
-        await self.browser.click("button[type='submit'], button[data-testid='login-button']")
+        # Step 3: Wait for and fill email field
+        # The OLX login page uses React with controlled inputs
+        # The email field is the first input inside the form
+        await self.browser.wait_for_selector(OLX_SELECTORS["login_email_input"], timeout=10.0)
+        
+        # Use type_text_react for React controlled inputs
+        if hasattr(self.browser, 'type_text_react'):
+            await self.browser.type_text_react(OLX_SELECTORS["login_email_input"], email)
+        else:
+            await self.browser.type_text(OLX_SELECTORS["login_email_input"], email)
+        
+        logger.debug("Email typed")
 
-        # Wait for password field
-        await self.browser.wait_for_selector("input[name='password'], input[type='password'], #password")
+        # Step 4: Click "Continuar" button
+        await self.browser.click(OLX_SELECTORS["login_continue_btn"])
+        logger.debug("Continuar clicked (email step)")
 
-        # Fill password
-        await self.browser.type_text("input[name='password'], input[type='password'], #password", password)
+        # Step 5: Wait for password field to appear
+        # After clicking Continuar with a valid email, the form transitions to password step
+        await asyncio.sleep(2)  # Give React time to transition
+        
+        # The password field might be the same input element (repurposed) or a new one
+        # Try multiple selectors
+        password_selector = None
+        for selector in [
+            "input[type='password']",
+            "input#input-2",
+            "input#input-1",  # Same field, repurposed
+            "form input",
+        ]:
+            try:
+                await self.browser.wait_for_selector(selector, timeout=5.0)
+                password_selector = selector
+                break
+            except CDPError:
+                continue
+        
+        if not password_selector:
+            # Check for error message (invalid email)
+            error_text = await self.browser.get_text(OLX_SELECTORS["login_error"])
+            if error_text:
+                logger.error(f"Login error: {error_text}")
+            logger.error("Password field not found — email might be invalid")
+            self.account.needs_reauth = True
+            return False
 
-        # Submit
-        await self.browser.click("button[type='submit'], button[data-testid='login-button']")
+        # Step 6: Type password
+        if hasattr(self.browser, 'type_text_react'):
+            await self.browser.type_text_react(password_selector, password)
+        else:
+            await self.browser.type_text(password_selector, password)
+        
+        logger.debug("Password typed")
 
-        # Wait for redirect to dashboard (indicates success)
+        # Step 7: Click "Continuar" again to submit
+        await self.browser.click(OLX_SELECTORS["login_continue_btn"])
+        logger.debug("Continuar clicked (password step)")
+
+        # Step 8: Wait for redirect to www.olx.com.br (success indicator)
+        # On successful login, OLX redirects from conta.olx.com.br to www.olx.com.br
         try:
-            await self.browser.wait_for_selector(
-                "[data-testid='dashboard'], .user-info, #my-account",
-                timeout=15.0
-            )
-            self.account.is_authenticated = True
-            self.account.needs_reauth = False
-            logger.info("OLX login successful")
-            return True
-        except Exception:
-            logger.error("OLX login failed — probably wrong credentials or captcha")
+            start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start < 15.0:
+                current_url = await self.browser.get_current_url() if hasattr(self.browser, 'get_current_url') else ""
+                if current_url and "conta.olx.com.br" not in current_url:
+                    # Redirected away from login page = success
+                    logger.info(f"Login successful — redirected to {current_url}")
+                    self.account.is_authenticated = True
+                    self.account.needs_reauth = False
+                    self.account.last_login_at = datetime.now(timezone.utc)
+                    return True
+                await asyncio.sleep(1)
+            
+            # Timeout — check if we're still on the login page (error) or if there's an error message
+            error_text = await self.browser.get_text(OLX_SELECTORS["login_error"])
+            if error_text:
+                logger.error(f"Login error: {error_text}")
+            else:
+                logger.error("Login timeout — no redirect after 15s")
+            self.account.needs_reauth = True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
             self.account.needs_reauth = True
             return False
 
     async def check_authenticated(self) -> bool:
-        """Check if the current session is still authenticated."""
-        await self.browser.navigate(OLX_DASHBOARD_URL)
+        """Check if the current session is still authenticated by navigating to my ads page."""
+        await self.browser.navigate(OLX_AD_LIMITS_URL)
+        await asyncio.sleep(3)
+        
+        # If we're redirected to the login page, we're not authenticated
+        current_url = await self.browser.get_current_url() if hasattr(self.browser, 'get_current_url') else ""
+        if "conta.olx.com.br" in current_url or "entrar" in current_url.lower():
+            self.account.needs_reauth = True
+            return False
+        
+        # Try to find ads list elements (only visible when authenticated)
         try:
-            await self.browser.wait_for_selector(
-                "[data-testid='dashboard'], .user-info, #my-account",
-                timeout=10.0
-            )
+            await self.browser.wait_for_selector(OLX_SELECTORS["ads_list"], timeout=10.0)
             self.account.is_authenticated = True
             self.account.needs_reauth = False
             return True
         except CDPError:
+            # Might be authenticated but page structure differs
+            # Check URL — if we're on www.olx.com.br/conta/*, we're likely authenticated
+            if "olx.com.br/conta" in current_url:
+                self.account.is_authenticated = True
+                self.account.needs_reauth = False
+                return True
             self.account.needs_reauth = True
             return False
 
@@ -142,7 +257,14 @@ class OlxAutomation:
         logger.info(f"Syncing limits for account {self.account.id}")
 
         await self.browser.navigate(OLX_AD_LIMITS_URL)
-        await asyncio.sleep(2)  # Let the page fully render
+        await asyncio.sleep(3)  # Let the page fully render (React SPA)
+
+        # Check authentication first
+        current_url = await self.browser.get_current_url() if hasattr(self.browser, 'get_current_url') else ""
+        if "conta.olx.com.br" in current_url:
+            logger.warning("Not authenticated — redirected to login")
+            self.account.needs_reauth = True
+            return {"error": "not_authenticated"}
 
         if self.account.account_type == OlxAccountType.professional:
             return await self._sync_professional_limits()
@@ -151,33 +273,56 @@ class OlxAutomation:
 
     async def _sync_professional_limits(self) -> dict:
         """Sync limits for a professional (paid) OLX account."""
-        # The dashboard shows something like "Você usou X de Y anúncios"
-        # We need to parse this text
-        limit_text = await self.browser.get_text(
-            "[data-testid='ad-limit-text'], .ad-limit-info, .plan-usage, "
-            ".insertion-limit, .limit-info"
-        )
+        # The dashboard shows limit info somewhere on the page
+        # Try multiple selectors for the limit text
+        page_text = await self.browser.get_text("body")
+        if not page_text:
+            logger.warning("Could not get page text")
+            return {"error": "no_page_text"}
 
-        if limit_text:
-            # Parse numbers from text like "45 de 250 anúncios usados"
-            numbers = re.findall(r'\d+', limit_text.replace('.', ''))
-            if len(numbers) >= 2:
-                used = int(numbers[0])
-                total = int(numbers[1])
-                remaining = max(0, total - used)
+        # Parse limit info from page text
+        # OLX shows something like "X de Y" or "Você usou X inserções"
+        # Also try to find specific limit elements
+        limit_text = await self.browser.get_text(OLX_SELECTORS["limit_text"])
+        
+        all_text = (limit_text or "") + " " + page_text
 
-                self.account.total_monthly_limit = total
-                self.account.used_this_month = used
-                self.account.remaining_this_month = remaining
-                self.account.last_limit_sync = datetime.now(timezone.utc)
+        # Parse numbers from text like "45 de 250 anúncios usados"
+        # Pattern 1: "X de Y" (most common)
+        match = re.search(r'(\d+)\s*(?:de|dos?|\/)\s*(\d+)', all_text.replace('.', ''))
+        if match:
+            used = int(match.group(1))
+            total = int(match.group(2))
+            remaining = max(0, total - used)
 
-                logger.info(f"Professional limits synced: {used}/{total} used, {remaining} remaining")
-                return {"total": total, "used": used, "remaining": remaining}
+            self.account.total_monthly_limit = total
+            self.account.used_this_month = used
+            self.account.remaining_this_month = remaining
+            self.account.last_limit_sync = datetime.now(timezone.utc)
 
-        # Fallback: try to count active ads
-        logger.warning("Could not parse limit text, trying alternative method")
+            logger.info(f"Professional limits synced: {used}/{total} used, {remaining} remaining")
+            return {"total": total, "used": used, "remaining": remaining}
+
+        # Pattern 2: "inserções" or "anúncios" with numbers nearby
+        match = re.search(r'(\d+)\s*(?:inserç|anúnc|insert)', all_text.replace('.', ''), re.IGNORECASE)
+        if match:
+            used = int(match.group(1))
+            # Try to find total nearby
+            total_match = re.search(r'(?:limite|total|máximo)\s*(?:de\s*)?(\d+)', all_text.replace('.', ''), re.IGNORECASE)
+            total = int(total_match.group(1)) if total_match else self.account.total_monthly_limit or 250
+            
+            remaining = max(0, total - used)
+            self.account.used_this_month = used
+            self.account.remaining_this_month = remaining
+            self.account.total_monthly_limit = total
+            self.account.last_limit_sync = datetime.now(timezone.utc)
+
+            logger.info(f"Professional limits synced (pattern 2): {used}/{total}")
+            return {"total": total, "used": used, "remaining": remaining}
+
+        # Fallback: count active ads
+        logger.warning("Could not parse limit text, counting active ads instead")
         ad_count = await self._count_active_ads()
-        # If we know the plan limit, calculate remaining
         if self.account.total_monthly_limit > 0:
             self.account.used_this_month = ad_count
             self.account.remaining_this_month = max(0, self.account.total_monthly_limit - ad_count)
@@ -191,64 +336,81 @@ class OlxAutomation:
 
     async def _sync_free_limits(self) -> dict:
         """Sync limits for a free OLX account — limits are per-category."""
-        await self.browser.navigate(OLX_FREE_LIMITS_HELP)
+        # Free accounts see their limits on the my-ads page
+        page_text = await self.browser.get_text("body")
+        if not page_text:
+            return {"error": "no_page_text"}
 
-        # On free accounts, we need to check each category's limit
-        # The OLX post page shows remaining limits per category when you try to post
-        category_limits = {}
+        # Try to find limit text on the my-ads page
+        limit_text = await self.browser.get_text(OLX_SELECTORS["limit_text"])
+        all_text = (limit_text or "") + " " + page_text
 
-        for category, url_path in OlxCategoryUrls.items():
-            # Navigate to the "create ad" page for this category
-            await self.browser.navigate(f"{OLX_POST_AD_URL}/{url_path}")
-            await asyncio.sleep(1)
+        # Parse per-category limits
+        # OLX free accounts typically show "X inserções gratuitas restantes"
+        match = re.search(r'(\d+)\s*(?:inserç|anúnc|restant|dispon)', all_text.replace('.', ''), re.IGNORECASE)
+        
+        if match:
+            remaining = int(match.group(1))
+            self.account.remaining_this_month = remaining
+            self.account.last_limit_sync = datetime.now(timezone.utc)
+            
+            # Free accounts typically have a total limit per month
+            # Try to find total
+            total_match = re.search(r'(?:total|máximo|limite)\s*(?:de\s*)?(\d+)', all_text.replace('.', ''), re.IGNORECASE)
+            total = int(total_match.group(1)) if total_match else 50  # Default free limit
+            used = max(0, total - remaining)
+            
+            self.account.total_monthly_limit = total
+            self.account.used_this_month = used
+            
+            logger.info(f"Free account limits: {used}/{total} used, {remaining} remaining")
+            return {"total": total, "used": used, "remaining": remaining}
 
-            # Try to find the limit indicator for this category
-            limit_text = await self.browser.get_text(
-                ".category-limit, .insertion-limit-text, "
-                "[data-testid='category-limit']"
-            )
-
-            if limit_text:
-                numbers = re.findall(r'\d+', limit_text.replace('.', ''))
-                if len(numbers) >= 2:
-                    limit = int(numbers[1])
-                    used = int(numbers[0])
-                    remaining = max(0, limit - used)
-                    category_limits[category.value] = {
-                        "limit": limit,
-                        "used": used,
-                        "remaining": remaining,
-                    }
-
-        self.account.category_limits = category_limits
+        # Fallback: count active ads
+        ad_count = await self._count_active_ads()
+        self.account.used_this_month = ad_count
         self.account.last_limit_sync = datetime.now(timezone.utc)
 
-        total_remaining = sum(c["remaining"] for c in category_limits.values())
-        self.account.remaining_this_month = total_remaining
-
-        logger.info(f"Free account limits synced: {json.dumps(category_limits)}")
-        return category_limits
+        return {
+            "total": self.account.total_monthly_limit,
+            "used": ad_count,
+            "remaining": max(0, (self.account.total_monthly_limit or 50) - ad_count),
+        }
 
     async def _count_active_ads(self) -> int:
         """Count the number of active ads on the account."""
-        await self.browser.navigate(OLX_AD_LIMITS_URL)
-        await asyncio.sleep(2)
-
-        # Try to find the count of active listings
-        count_text = await self.browser.get_text(
-            ".active-ads-count, [data-testid='active-count'], "
-            ".listing-count, .ads-count"
-        )
-        if count_text:
-            numbers = re.findall(r'\d+', count_text.replace('.', ''))
-            if numbers:
-                return int(numbers[0])
-
-        # Fallback: count ad cards on the page
-        count = await self.browser._evaluate_js("""
-            document.querySelectorAll('[data-testid="ad-card"], .ad-card, .listing-card').length
+        # Try to find the count via JS evaluation
+        result = await self.browser._evaluate_js("""
+            (() => {
+                // Try multiple selectors for ad cards
+                const selectors = [
+                    '[data-testid="ad-card"]',
+                    '[data-testid*="ad-card"]',
+                    '.ad-card',
+                    '[class*="ad-card"]',
+                    '[class*="AdCard"]',
+                    '[data-testid="ad-list"] > *',
+                    'section[class*="ad"]',
+                    'article',
+                ];
+                for (const sel of selectors) {
+                    const elements = document.querySelectorAll(sel);
+                    if (elements.length > 0) {
+                        return elements.length;
+                    }
+                }
+                // Fallback: count elements that look like ad listings
+                const allElements = document.querySelectorAll('[data-testid], [class*="ad"], [class*="Ad"]');
+                return allElements.length;
+            })()
         """)
-        return count.get("result", {}).get("value", 0)
+        
+        count = result.get("result", {}).get("value", 0) if result else 0
+        if isinstance(count, dict):
+            count = 0
+            
+        logger.info(f"Found {count} ad elements on page")
+        return int(count) if count else 0
 
     # ============================================================
     # AD POSTING
@@ -256,308 +418,192 @@ class OlxAutomation:
 
     async def post_ad(self, variation: AdVariation, product: Product) -> Optional[Publication]:
         """
-        Post an ad on OLX using CDP. This is the core action.
-
-        Steps:
-        1. Navigate to "Create Ad" page
-        2. Select category
-        3. Fill title, description, price
-        4. Upload image
-        5. Submit
-        6. Capture the ad URL/ID
+        Post an ad on OLX using CDP.
+        Returns a Publication record if successful, None if failed.
         """
-        logger.info(f"Posting ad: {variation.title}")
+        logger.info(f"Posting ad for product {product.id}, variation {variation.id}")
 
-        # Navigate to create ad page
         await self.browser.navigate(OLX_POST_AD_URL)
-        await self.browser.wait_for_selector("form, [data-testid='create-ad-form']")
+        await asyncio.sleep(3)
 
-        # 1. Select category
-        await self._select_category(product.category, product.subcategory)
+        # Accept cookies if present
+        await self.browser.accept_cookies(timeout=3.0)
 
-        # 2. Fill title
-        await self.browser.wait_for_selector("input[name='title'], #title, [data-testid='title-input']")
-        await self.browser.type_text("input[name='title'], #title, [data-testid='title-input']", variation.title)
+        # Select category (OLX has a category picker)
+        await self._select_category(product.category)
 
-        # 3. Fill description
-        await self.browser.wait_for_selector("textarea[name='description'], #description, [data-testid='description-input']")
-        await self.browser.type_text("textarea[name='description'], #description, [data-testid='description-input']", variation.description)
+        # Fill title
+        await self.browser.wait_for_selector(OLX_SELECTORS["post_title_input"], timeout=10.0)
+        if hasattr(self.browser, 'type_text_react'):
+            await self.browser.type_text_react(OLX_SELECTORS["post_title_input"], variation.title)
+        else:
+            await self.browser.type_text(OLX_SELECTORS["post_title_input"], variation.title)
 
-        # 4. Fill price
-        price_input = "input[name='price'], #price, [data-testid='price-input']"
-        await self.browser.wait_for_selector(price_input)
-        price_str = str(int(product.price))  # OLX expects integer
-        await self.browser.type_text(price_input, price_str)
+        # Fill description
+        await self.browser.wait_for_selector(OLX_SELECTORS["post_desc_input"], timeout=5.0)
+        if hasattr(self.browser, 'type_text_react'):
+            await self.browser.type_text_react(OLX_SELECTORS["post_desc_input"], variation.description)
+        else:
+            await self.browser.type_text(OLX_SELECTORS["post_desc_input"], variation.description)
 
-        # 5. Upload image
-        if variation.image_url:
-            # Download the image to a temp file
-            import httpx
-            import tempfile
-            import os
+        # Fill price
+        if product.price:
+            await self.browser.wait_for_selector(OLX_SELECTORS["post_price_input"], timeout=5.0)
+            if hasattr(self.browser, 'type_text_react'):
+                await self.browser.type_text_react(OLX_SELECTORS["post_price_input"], str(product.price))
+            else:
+                await self.browser.type_text(OLX_SELECTORS["post_price_input"], str(product.price))
 
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(variation.image_url, timeout=30.0)
-                resp.raise_for_status()
+        # Upload images if available
+        if variation.generated_image_url:
+            # Download image to temp file and upload
+            # TODO: Implement image download + upload
+            pass
 
-            temp_dir = tempfile.mkdtemp()
-            temp_file = os.path.join(temp_dir, f"ad_image_{uuid.uuid4().hex[:8]}.png")
-            with open(temp_file, "wb") as f:
-                f.write(resp.content)
+        # Submit the ad
+        await self.browser.click(OLX_SELECTORS["post_submit_btn"])
+        await asyncio.sleep(3)
 
-            # Upload via file chooser interception
-            upload_selector = "input[type='file'], [data-testid='image-upload'], .upload-area, .dropzone"
-            await self.browser.upload_file(upload_selector, temp_file)
-
-            # Wait for upload to complete
-            await asyncio.sleep(3)
-            await self.browser.wait_for_selector(
-                ".uploaded-image, .image-preview, [data-testid='image-uploaded']",
-                timeout=15.0
+        # Get the resulting URL (ad confirmation page)
+        current_url = await self.browser.get_current_url() if hasattr(self.browser, 'get_current_url') else ""
+        
+        if "olx.com.br" in current_url and "criar-anuncio" not in current_url:
+            # Redirected away from the form = success
+            logger.info(f"Ad posted successfully: {current_url}")
+            
+            publication = Publication(
+                variation_id=variation.id,
+                account_id=self.account.id,
+                status=PublicationStatus.active,
+                olx_ad_url=current_url,
+                posted_at=datetime.now(timezone.utc),
             )
+            return publication
+        else:
+            logger.error("Ad posting failed — still on form page")
+            return None
 
-            # Clean up temp file
-            os.remove(temp_file)
-            os.rmdir(temp_dir)
-
-        # 6. Fill additional fields based on category
-        await self._fill_category_specific_fields(product)
-
-        # 7. Set condition
-        condition_map = {
-            "novo": "new",
-            "seminovo": "used",
-            "usado": "used",
+    async def _select_category(self, category: OlxCategory):
+        """Select the product category on the OLX post ad form."""
+        # OLX category mapping
+        category_map = {
+            OlxCategory.celulares: "Celulares",
+            OlxCategory.informatica: "Informática",
+            OlxCategory.games: "Games",
+            OlxCategory.audio: "Áudio",
+            OlxCategory.tvs: "TVs",
+            OlxCategory.cameras: "Câmeras e Drones",
         }
-        condition_value = condition_map.get(product.condition, "used")
-        await self._select_radio(f"[name='condition'], [data-testid='condition-{condition_value}']", condition_value)
-
-        # 8. Submit the ad
-        await self.browser.click("button[type='submit'], [data-testid='publish-button'], .submit-button")
-
-        # 9. Wait for confirmation and capture ad URL
-        try:
-            await self.browser.wait_for_selector(
-                ".success-message, [data-testid='ad-success'], .ad-published",
-                timeout=20.0
-            )
-            # Capture the ad URL from the success page
-            ad_url = await self.browser._evaluate_js("window.location.href")
-            ad_url = ad_url.get("result", {}).get("value", "")
-            olx_ad_id = self._extract_ad_id(ad_url)
-
-            logger.info(f"Ad posted successfully: {ad_url}")
-            return {
-                "olx_ad_id": olx_ad_id,
-                "olx_ad_url": ad_url,
-                "status": PublicationStatus.online,
-            }
-        except CDPError:
-            logger.error("Failed to confirm ad publication")
-            return {
-                "status": PublicationStatus.failed,
-                "error": "Could not confirm publication",
-            }
-
-    async def _select_category(self, category: OlxCategory, subcategory: Optional[str]):
-        """Select the OLX category and subcategory for the ad."""
-        url_path = OlxCategoryUrls.get(category, "diversos")
-        category_selector = f"[data-testid='category-{category.value}'], a[href*='{url_path}']"
-
-        await self.browser.click(category_selector)
-        await self.browser._human_delay()
-
-        if subcategory:
-            sub_selector = f"[data-testid='subcategory-{subcategory}'], a[href*='{subcategory}']"
-            try:
-                await self.browser.click(sub_selector)
-            except CDPError:
-                logger.warning(f"Subcategory {subcategory} not found, using main category")
-
-    async def _fill_category_specific_fields(self, product: Product):
-        """Fill category-specific fields based on the product."""
-        # Different categories have different required fields
-        # This is a simplified version — would need to be expanded per category
-
-        if product.brand:
-            brand_input = "input[name='brand'], #brand, [data-testid='brand-input']"
-            try:
-                await self.browser.wait_for_selector(brand_input, timeout=3.0)
-                await self.browser.type_text(brand_input, product.brand)
-            except CDPError:
-                pass
-
-        if product.model:
-            model_input = "input[name='model'], #model, [data-testid='model-input']"
-            try:
-                await self.browser.wait_for_selector(model_input, timeout=3.0)
-                await self.browser.type_text(model_input, product.model)
-            except CDPError:
-                pass
-
-        # Fill specs if available
-        if product.specs:
-            for key, value in product.specs.items():
-                field = f"input[name='{key}'], select[name='{key}'], [data-testid='{key}-input']"
-                try:
-                    await self.browser.wait_for_selector(field, timeout=2.0)
-                    await self.browser.type_text(field, str(value))
-                except CDPError:
-                    pass
-
-    async def _select_radio(self, selector: str, value: str):
-        """Select a radio button or similar option."""
-        try:
-            await self.browser.click(selector)
-        except CDPError:
-            logger.warning(f"Could not select option: {selector}")
-
-    def _extract_ad_id(self, url: str) -> Optional[str]:
-        """Extract the OLX ad ID from the URL."""
-        match = re.search(r'/(\d+)(?:\?|$|#)', url)
-        return match.group(1) if match else None
-
-    # ============================================================
-    # PERFORMANCE SCRAPING
-    # ============================================================
-
-    async def scrape_performance(self, publication: Publication) -> dict:
-        """
-        Scrape performance metrics (views, chats) from a published ad.
-        Navigates to the ad's dashboard page and extracts metrics.
-        """
-        if not publication.olx_ad_id:
-            return {}
-
-        await self.browser.navigate(f"{OLX_AD_LIMITS_URL}/{publication.olx_ad_id}")
-        await asyncio.sleep(2)
-
-        views = await self.browser.get_text(
-            "[data-testid='view-count'], .views-count, .stat-views"
-        )
-        chats = await self.browser.get_text(
-            "[data-testid='chat-count'], .chats-count, .stat-chats"
-        )
-        clicks = await self.browser.get_text(
-            "[data-testid='click-count'], .clicks-count, .stat-clicks"
-        )
-        favorites = await self.browser.get_text(
-            "[data-testid='favorite-count'], .favorites-count, .stat-favorites"
-        )
-
-        def parse_num(text):
-            if not text:
-                return 0
-            nums = re.findall(r'\d+', text.replace('.', ''))
-            return int(nums[0]) if nums else 0
-
-        return {
-            "views": parse_num(views),
-            "chats": parse_num(chats),
-            "clicks": parse_num(clicks),
-            "favorites": parse_num(favorites),
-        }
+        
+        category_name = category_map.get(category, "Celulares")
+        
+        # Try to find and click the category
+        result = await self.browser._evaluate_js(f"""
+            (() => {{
+                const links = document.querySelectorAll('a, button, [role="button"]');
+                for (const link of links) {{
+                    if (link.textContent && link.textContent.includes({json.dumps(category_name)})) {{
+                        link.click();
+                        return true;
+                    }}
+                }}
+                return false;
+            }})()
+        """)
+        
+        await asyncio.sleep(1)
 
     # ============================================================
     # CHAT AUTOMATION
     # ============================================================
 
     async def read_chat_messages(self) -> list[dict]:
-        """
-        Scrape incoming chat messages from OLX.
-        Navigates to the messages page and extracts unread conversations.
-        """
+        """Read incoming chat messages from OLX."""
         await self.browser.navigate(OLX_CHAT_URL)
         await asyncio.sleep(3)
 
-        # Get list of unread conversations
-        conversations = await self.browser._evaluate_js("""
+        # Extract chat messages via JS
+        result = await self.browser._evaluate_js("""
             (() => {
-                const convs = document.querySelectorAll(
-                    '[data-testid="conversation-item"], .conversation-item, .message-preview'
+                const messages = [];
+                const msgElements = document.querySelectorAll(
+                    '[data-testid="message"], .message, [class*="message"]'
                 );
-                return Array.from(convs).map(c => ({
-                    id: c.dataset.id || c.getAttribute('data-conversation-id'),
-                    text: c.querySelector('.message-text, .preview-text')?.textContent,
-                    isUnread: c.querySelector('.unread-badge, .unread-indicator') !== null,
-                    buyerName: c.querySelector('.buyer-name, .conversation-name')?.textContent,
-                }));
+                msgElements.forEach(el => {
+                    messages.push({
+                        text: el.textContent,
+                        sender: el.getAttribute('data-sender') || 'unknown',
+                    });
+                });
+                return messages;
             })()
         """)
-
-        conversations_data = conversations.get("result", {}).get("value", [])
-        messages = []
-
-        for conv in conversations_data:
-            if not conv.get("isUnread"):
-                continue
-
-            # Click to open the conversation
-            conv_selector = f"[data-conversation-id='{conv['id']}'], [data-id='{conv['id']}']"
-            try:
-                await self.browser.click(conv_selector)
-                await asyncio.sleep(2)
-
-                # Get the last incoming message
-                last_msg = await self.browser._evaluate_js("""
-                    (() => {
-                        const msgs = document.querySelectorAll(
-                            '[data-testid="message-item"], .message-bubble, .chat-message'
-                        );
-                        const lastIncoming = Array.from(msgs)
-                            .filter(m => m.classList.contains('incoming') || m.dataset.direction === 'incoming')
-                            .pop();
-                        return lastIncoming ? {
-                            text: lastIncoming.textContent,
-                            conversationId: lastIncoming.dataset.conversationId,
-                        } : null;
-                    })()
-                """)
-
-                msg_data = last_msg.get("result", {}).get("value")
-                if msg_data:
-                    messages.append({
-                        "olx_conversation_id": conv["id"] or msg_data.get("conversationId"),
-                        "buyer_name": conv.get("buyerName"),
-                        "message_text": msg_data["text"],
-                    })
-            except Exception as e:
-                logger.error(f"Error reading conversation {conv.get('id')}: {e}")
-                continue
-
-        logger.info(f"Read {len(messages)} new chat messages from OLX")
-        return messages
+        
+        messages = result.get("result", {}).get("value", []) if result else []
+        return messages if isinstance(messages, list) else []
 
     async def send_chat_reply(self, conversation_id: str, message: str) -> bool:
-        """Send a reply in an OLX chat conversation."""
-        await self.browser.navigate(OLX_CHAT_URL)
+        """Send a chat reply on OLX."""
+        # Navigate to the specific conversation
+        await self.browser.navigate(f"{OLX_CHAT_URL}/{conversation_id}")
         await asyncio.sleep(2)
 
-        # Open the conversation
-        conv_selector = f"[data-conversation-id='{conversation_id}'], [data-id='{conversation_id}']"
-        await self.browser.click(conv_selector)
-        await asyncio.sleep(2)
+        # Find the message input and type
+        await self.browser.wait_for_selector(
+            "textarea, input[type='text'][class*='message'], [data-testid='message-input']",
+            timeout=10.0
+        )
+        
+        if hasattr(self.browser, 'type_text_react'):
+            await self.browser.type_text_react(
+                "textarea, input[type='text'][class*='message'], [data-testid='message-input']",
+                message
+            )
+        else:
+            await self.browser.type_text(
+                "textarea, input[type='text'][class*='message'], [data-testid='message-input']",
+                message
+            )
 
-        # Type the message
-        input_selector = "textarea[data-testid='chat-input'], .chat-input, .message-input"
-        await self.browser.wait_for_selector(input_selector)
-        await self.browser.type_text(input_selector, message)
-
-        # Send
-        await self.browser.click("button[data-testid='send-button'], .send-button, button[type='submit']")
-
-        logger.info(f"Sent chat reply in conversation {conversation_id}")
+        # Send the message
+        await self.browser.click(
+            "button[type='submit'], button[data-testid='send'], [data-testid='send-button']"
+        )
+        
+        await asyncio.sleep(1)
+        logger.info(f"Chat reply sent to conversation {conversation_id}")
         return True
 
+    # ============================================================
+    # AD STATUS CHECK
+    # ============================================================
 
-# ============================================================
-# OLX CATEGORY URL PATHS
-# ============================================================
+    async def check_ad_status(self, ad_url: str) -> str:
+        """Check if an ad is still active by visiting its URL."""
+        await self.browser.navigate(ad_url)
+        await asyncio.sleep(2)
+
+        # Check if the ad page shows the product (active) or a removed message
+        page_text = await self.browser.get_text("body")
+        if not page_text:
+            return "unknown"
+
+        page_lower = page_text.lower()
+        if "anúncio removido" in page_lower or "não está mais disponível" in page_lower:
+            return "removed"
+        elif "anúncio pausado" in page_lower:
+            return "paused"
+        elif "comprar" in page_lower or "vender" in page_lower or "contato" in page_lower:
+            return "active"
+        return "unknown"
+
+
+# OLX Category URL paths for the post ad page
 OlxCategoryUrls = {
-    OlxCategory.celulares_telefonia: "celulares-e-telefonia",
-    OlxCategory.informatica: "informatica",
+    OlxCategory.celulares: "celulares-e-smartphones",
+    OlxCategory.informatica: "computadores-e-acessorios",
     OlxCategory.games: "games",
     OlxCategory.audio: "audio",
-    OlxCategory.tvs_e_video: "tvs-e-video",
-    OlxCategory.cameras_e_drones: "cameras-e-drones",
+    OlxCategory.tvs: "tvs",
+    OlxCategory.cameras: "cameras-e-drones",
 }
