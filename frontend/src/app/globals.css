@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-card: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --border-color: #e2e8f0;
+}
+
+.dark {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+}
+
+* {
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* Custom utilities */
+@layer components {
+  .card {
+    @apply rounded-xl border p-6;
+    background-color: var(--bg-card);
+    border-color: var(--border-color);
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 transition-colors;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors;
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+  .input {
+    @apply w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-500;
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .badge-green { @apply bg-green-100 text-green-700; }
+  .badge-blue { @apply bg-blue-100 text-blue-700; }
+  .badge-red { @apply bg-red-100 text-red-700; }
+  .badge-yellow { @apply bg-yellow-100 text-yellow-700; }
+  .badge-gray { @apply bg-gray-100 text-gray-600; }
+  .dark .badge-green { @apply bg-green-900/40 text-green-400; }
+  .dark .badge-blue { @apply bg-blue-900/40 text-blue-400; }
+  .dark .badge-red { @apply bg-red-900/40 text-red-400; }
+  .dark .badge-yellow { @apply bg-yellow-900/40 text-yellow-400; }
+  .dark .badge-gray { @apply bg-slate-700 text-slate-300; }
+}
