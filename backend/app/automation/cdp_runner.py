@@ -212,11 +212,12 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
         await browser.click("form button")
         add_step("continue_clicked", "success", "Botão Continuar clicado (etapa email)")
 
-        # Step 6: Wait for password field OR error message
+        # Step 6: Wait for password field AND type immediately (no race condition)
+        # Uses wait_and_type_react — single JS eval detects element and types instantly
         add_step("find_password_field", "running", "Aguardando campo de senha...")
-        await asyncio.sleep(3)  # Give React time to transition
+        await asyncio.sleep(2)  # Brief pause for React transition
 
-        # First, check for error messages (invalid email, account not found, etc.)
+        # Check for error messages first
         error_msg = await _check_olx_error(browser)
         if error_msg:
             add_step("login_error", "error", f"Erro da OLX: {error_msg}")
@@ -225,23 +226,33 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
             await browser.close()
             return cdp_sessions[session_id]
 
-        # Try to find the password field with multiple selectors
-        password_selector = None
+        # Try multiple password selectors with wait_and_type_react
+        # This combines detection + typing in a single JS eval — no race condition
+        password_typed = False
         for selector in [
             "input[type='password']",
             "input#input-2",
             "form input[type='password']",
-            "input#input-1",  # Same field repurposed by React
+            "input#input-1",
         ]:
             try:
-                await browser.wait_for_selector(selector, timeout=5.0)
-                password_selector = selector
-                break
-            except CDPError:
+                if hasattr(browser, 'wait_and_type_react'):
+                    add_step("type_password", "running", f"Digitando senha com wait_and_type_react ({selector})...")
+                    await browser.wait_and_type_react(selector, password, timeout=10.0)
+                    password_typed = True
+                    add_step("password_typed", "success", f"Senha preenchida instantaneamente ({selector})")
+                    break
+                else:
+                    await browser.wait_for_selector(selector, timeout=5.0)
+                    await _type_with_retry(browser, selector, password, retries=3)
+                    password_typed = True
+                    add_step("password_typed", "success", f"Senha preenchida ({selector})")
+                    break
+            except Exception:
                 continue
 
-        if not password_selector:
-            # Double-check for error messages
+        if not password_typed:
+            # Check for errors / CAPTCHA / redirect
             error_msg = await _check_olx_error(browser)
             if error_msg:
                 add_step("login_error", "error", f"Erro da OLX: {error_msg}")
@@ -249,40 +260,21 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
                 # Try getting any visible text that might indicate what happened
                 try:
                     body_text = await browser.get_text("body") or ""
-                    # Look for common OLX messages
                     if "informe um e-mail" in body_text.lower():
                         add_step("login_error", "error", "Email rejeitado pela OLX — formato inválido")
                     elif "não encontrado" in body_text.lower() or "não existe" in body_text.lower():
                         add_step("login_error", "error", "Email não cadastrado na OLX")
                     else:
+                        # Capture page state for debugging
+                        url_result = await browser._evaluate_js("window.location.href")
+                        current_url = url_result.get("result", {}).get("value", "unknown")
                         add_step("login_error", "error", 
-                                "Campo de senha não encontrado — email pode estar incorreto ou não cadastrado")
+                                f"Campo de senha não encontrado (URL: {current_url}). Email pode não estar cadastrado.")
                 except Exception:
                     add_step("login_error", "error", "Campo de senha não encontrado")
             
             cdp_sessions[session_id]["status"] = "error"
             cdp_sessions[session_id]["current_action"] = "Erro: Campo de senha não encontrado"
-            await browser.close()
-            return cdp_sessions[session_id]
-
-        add_step("password_field_found", "success", f"Campo de senha encontrado ({password_selector})")
-
-        # Wait a moment for the field to become interactive
-        await asyncio.sleep(1)
-
-        # Step 7: Type password (with retry for React re-render timing)
-        add_step("type_password", "running", "Digitando senha...")
-        try:
-            await _type_with_retry(browser, password_selector, password, retries=3)
-            add_step("password_typed", "success", "Senha preenchida")
-        except Exception as e:
-            error_str = str(e)
-            if "OLX error:" in error_str:
-                add_step("login_error", "error", error_str)
-            else:
-                add_step("type_password_error", "error", f"Erro ao digitar senha: {error_str}")
-            cdp_sessions[session_id]["status"] = "error"
-            cdp_sessions[session_id]["current_action"] = f"Erro: {error_str}"
             await browser.close()
             return cdp_sessions[session_id]
 
