@@ -173,7 +173,41 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
         await _type_with_retry(browser, "form input", email, retries=2)
         add_step("email_typed", "success", "Email preenchido (React mode)")
 
-        # Step 5: Click "Continuar" button
+        # Step 5: Check if Continuar button is enabled (email was accepted by React)
+        add_step("check_button", "running", "Verificando botão Continuar...")
+        await asyncio.sleep(1)
+        btn_state = await browser._evaluate_js("""
+            (() => {
+                const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                if (!btn) return 'no_btn';
+                return btn.disabled ? 'disabled' : 'enabled';
+            })()
+        """)
+        btn_status = btn_state.get("result", {}).get("value", "")
+        
+        if btn_status == "disabled":
+            # Email wasn't properly entered — try typing again
+            add_step("retry_email", "running", "Botão disabled — redigitando email...")
+            await browser.type_text_react("form input", email, retries=2)
+            await asyncio.sleep(1)
+            btn_state = await browser._evaluate_js("""
+                (() => {
+                    const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                    return btn ? (btn.disabled ? 'disabled' : 'enabled') : 'no_btn';
+                })()
+            """)
+            btn_status = btn_state.get("result", {}).get("value", "")
+            
+            if btn_status == "disabled":
+                add_step("login_error", "error", "Botão Continuar permanece disabled — email não foi aceito pelo React")
+                cdp_sessions[session_id]["status"] = "error"
+                cdp_sessions[session_id]["current_action"] = "Erro: Email não aceito pelo React"
+                await browser.close()
+                return cdp_sessions[session_id]
+        
+        add_step("button_enabled", "success", f"Botão Continuar {btn_status}")
+        
+        # Step 5b: Click "Continuar" button
         add_step("click_continue", "running", "Clicando em Continuar...")
         await browser.click("form button")
         add_step("continue_clicked", "success", "Botão Continuar clicado (etapa email)")
