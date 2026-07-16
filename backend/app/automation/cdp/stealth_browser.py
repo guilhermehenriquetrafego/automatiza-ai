@@ -500,76 +500,126 @@ class StealthBrowser:
         await self._human_delay()
 
     async def type_text_react(self, selector: str, text: str, per_char_delay: tuple = (0.03, 0.12)):
-        """Type text into a React controlled input. Dispatches proper events that React recognizes."""
-        # Focus the element first
-        await self.click(selector)
-        await asyncio.sleep(0.2)
-
-        # Clear any existing text first
-        await self._evaluate_js(f"""
+        """
+        Type text into a React controlled input.
+        
+        Uses nativeInputValueSetter — the standard way to set values on React
+        controlled inputs. Regular keyboard events don't work because React's
+        synthetic event system requires the native value property to change
+        via the native setter, not via key dispatch.
+        """
+        # Method 1: nativeInputValueSetter (most reliable for React)
+        result = await self._evaluate_js(f"""
             (() => {{
                 const el = document.querySelector({json.dumps(selector)});
-                if (el) {{
-                    el.focus();
-                    el.select();
-                }}
+                if (!el) return 'not_found';
+                
+                // Focus the element
+                el.focus();
+                
+                // Use nativeInputValueSetter — this is the ONLY way to
+                // programmatically set a value that React will recognize
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                ).set;
+                nativeInputValueSetter.call(el, {json.dumps(text)});
+                
+                // Dispatch the events React listens to
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                
+                // Verify the value was set
+                return el.value === {json.dumps(text)} ? 'ok' : 'mismatch:' + el.value;
             }})()
         """)
-        # Send Ctrl+A to select all, then Delete
-        await self._cdp.send("Input.dispatchKeyEvent", {
+        
+        status = result.get("result", {}).get("value", "")
+        
+        if status == "ok":
+            logger.debug(f"nativeInputValueSetter OK for {selector} ({len(text)} chars)")
+            await self._human_delay()
+            return
+        
+        if status.startswith("not_found"):
+            raise CDPError(f"Element not found: {selector}")
+        
+        # Method 2: Input.insertText (CDP native text insertion)
+        logger.debug(f"nativeInputValueSetter returned '{status}', trying Input.insertText")
+        
+        # Click to focus
+        await self.click(selector)
+        await asyncio.sleep(0.3)
+        
+        # Clear existing text
+        await self._cdp.send("Input.dispatchKeyEvent", {{
             "type": "keyDown",
             "key": "a",
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
-            "modifiers": 2,  # Ctrl
-        }, session_id=self._session_id)
-        await self._cdp.send("Input.dispatchKeyEvent", {
+            "modifiers": 2,
+        }}, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {{
             "type": "keyUp",
             "key": "a",
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
             "modifiers": 2,
-        }, session_id=self._session_id)
-        await self._cdp.send("Input.dispatchKeyEvent", {
+        }}, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {{
             "type": "keyDown",
             "key": "Backspace",
             "code": "Backspace",
             "windowsVirtualKeyCode": 8,
-        }, session_id=self._session_id)
-        await self._cdp.send("Input.dispatchKeyEvent", {
-            "type": "keyUp",
-            "key": "Backspace",
-            "code": "Backspace",
-            "windowsVirtualKeyCode": 8,
-        }, session_id=self._session_id)
+        }}, session_id=self._session_id)
         await asyncio.sleep(0.1)
-
+        
+        # Try Input.insertText (inserts text at cursor position)
+        try:
+            await self._cdp.send("Input.insertText", {{
+                "text": text
+            }}, session_id=self._session_id)
+            
+            # Dispatch input event to trigger React handler
+            await self._evaluate_js(f"""
+                (() => {{
+                    const el = document.querySelector({json.dumps(selector)});
+                    if (el) {{
+                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                }})()
+            """)
+            
+            logger.debug(f"Input.insertText OK for {selector} ({len(text)} chars)")
+            await self._human_delay()
+            return
+        except Exception as e:
+            logger.warning(f"Input.insertText failed: {e}")
+        
+        # Method 3: Character-by-character with nativeInputValueSetter after each char
+        logger.debug("Falling back to char-by-char + nativeInputValueSetter")
+        await self.click(selector)
+        await asyncio.sleep(0.2)
+        
+        accumulated = ""
         for char in text:
-            await self._cdp.send("Input.dispatchKeyEvent", {
-                "type": "keyDown",
-                "text": char,
-            }, session_id=self._session_id)
-            await self._cdp.send("Input.dispatchKeyEvent", {
-                "type": "keyUp",
-                "text": char,
-            }, session_id=self._session_id)
-            # Log-normal delay between keystrokes (more natural than uniform)
+            accumulated += char
+            await self._evaluate_js(f"""
+                (() => {{
+                    const el = document.querySelector({json.dumps(selector)});
+                    if (!el) return;
+                    el.focus();
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    setter.call(el, {json.dumps(accumulated)});
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }})()
+            """)
             delay = self._log_normal_delay(per_char_delay[0], per_char_delay[1])
             await asyncio.sleep(delay)
-
-        # Dispatch input and change events that React listens to
-        await self._evaluate_js(f"""
-            (() => {{
-                const el = document.querySelector({json.dumps(selector)});
-                if (el) {{
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    el.blur();
-                }}
-            }})()
-        """)
-
-        logger.debug(f"Typed {len(text)} chars into {selector} (React mode)")
+        
+        logger.debug(f"Char-by-char OK for {selector} ({len(text)} chars)")
         await self._human_delay()
 
     async def accept_cookies(self, timeout: float = 5.0):
