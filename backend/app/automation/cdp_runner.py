@@ -35,21 +35,40 @@ OLX_MY_ADS_URL = "https://www.olx.com.br/conta/meusanuncios"
 
 
 async def _check_olx_error(browser) -> Optional[str]:
-    """Check if OLX is showing an error message after an action."""
+    """Check if OLX is showing a VISIBLE error message after an action."""
+    # Messages that are NOT real login errors (cookie notices, generic warnings)
+    IGNORE_PATTERNS = [
+        "enable cookies",
+        "cookies",
+        "javascript",
+        "browser",
+        "ato continuar",
+        "termos de uso",
+        "política de privacidade",
+    ]
+    
     try:
-        # Common OLX error selectors
+        # More specific OLX error selectors (in priority order)
         error_selectors = [
-            "[class*='error']",
-            "[class*='Error']",
             "[role='alert']",
             "[data-testid*='error']",
+            "[data-testid*='alert']",
             "span[class*='invalid']",
             "p[class*='invalid']",
+            "div[class*='ErrorMessage']",
+            "div[class*='errorMessage']",
+            "span[class*='ErrorMessage']",
+            "p[class*='ErrorMessage']",
         ]
         for sel in error_selectors:
             try:
-                text = await browser.get_text(sel)
-                if text and len(text.strip()) > 3 and text.strip() not in ["", "none"]:
+                # Only get text from VISIBLE elements
+                text = await browser.get_text(sel, visible_only=True)
+                if text and len(text.strip()) > 3:
+                    text_clean = text.strip().lower()
+                    # Skip cookie/browser warnings
+                    if any(pattern in text_clean for pattern in IGNORE_PATTERNS):
+                        continue
                     return text.strip()
             except Exception:
                 continue
