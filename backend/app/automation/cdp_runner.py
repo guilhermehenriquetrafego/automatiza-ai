@@ -341,13 +341,54 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
 
         try:
             start = asyncio.get_event_loop().time()
+            redirect_url = None
             while asyncio.get_event_loop().time() - start < 20.0:
                 if hasattr(browser, 'get_current_url'):
                     current_url = await browser.get_current_url()
                     if current_url and "conta.olx.com.br" not in current_url:
                         login_success = True
+                        redirect_url = current_url
                         break
                 await asyncio.sleep(1)
+            
+            if not login_success:
+                # Capture diagnostics: URL, page text, visible buttons, CAPTCHA
+                diag_url = await browser.get_current_url() if hasattr(browser, 'get_current_url') else "unknown"
+                diag_content = await browser._evaluate_js("""
+                    (() => {
+                        const body = document.body || {};
+                        const text = (body.innerText || body.textContent || '').slice(0, 500);
+                        const buttons = Array.from(document.querySelectorAll('button, a[type="submit"]')).map(b => ({
+                            text: (b.textContent || '').trim().slice(0, 50),
+                            disabled: b.disabled,
+                            visible: b.offsetWidth > 0 || b.offsetHeight > 0
+                        }));
+                        const inputs = Array.from(document.querySelectorAll('input')).map(i => ({
+                            type: i.type,
+                            value_len: (i.value || '').length,
+                            placeholder: i.placeholder || ''
+                        }));
+                        const captcha = !!document.querySelector('iframe[src*="captcha"], iframe[src*="recaptcha"], [class*="captcha"], [id*="captcha"]');
+                        return { text, buttons, inputs, captcha };
+                    })()
+                """)
+                diag = diag_content.get("result", {}).get("value", {})
+                if diag:
+                    diag_text = diag.get("text", "")[:200]
+                    diag_buttons = diag.get("buttons", [])
+                    diag_inputs = diag.get("inputs", [])
+                    diag_captcha = diag.get("captcha", False)
+                    
+                    add_step("diagnostics", "running", 
+                        f"URL: {diag_url} | CAPTCHA: {diag_captcha} | Text: {diag_text[:100]}... | Buttons: {len(diag_buttons)} | Inputs: {len(diag_inputs)}")
+                    
+                    # Check for CAPTCHA
+                    if diag_captcha:
+                        add_step("captcha_detected", "error", "CAPTCHA detectado — OLX bloqueou a automação")
+                        cdp_sessions[session_id]["status"] = "error"
+                        cdp_sessions[session_id]["current_action"] = "Erro: CAPTCHA detectado"
+                        await browser.close()
+                        return cdp_sessions[session_id]
 
             if login_success:
                 add_step("login_success", "success", "Login realizado! Redirecionado para www.olx.com.br")
