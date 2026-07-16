@@ -478,6 +478,58 @@ class StealthBrowser:
 
         await self._human_delay()
 
+    async def wait_and_type_react(self, selector: str, text: str, timeout: float = 30.0) -> bool:
+        """
+        Wait for an element to appear AND type into it in a single JS evaluation.
+        
+        This eliminates the race condition where:
+        1. wait_for_selector finds the element
+        2. type_text_react tries to find it again — but it's already gone
+        
+        Instead, we poll for the element inside JS and type IMMEDIATELY when found.
+        No gap between detection and typing.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            result = await self._evaluate_js(f"""
+                (() => {{
+                    const el = document.querySelector({json.dumps(selector)});
+                    if (!el) return 'not_found';
+                    
+                    // Element found — type IMMEDIATELY
+                    el.focus();
+                    
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    setter.call(el, {json.dumps(text)});
+                    
+                    el.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        cancelable: true,
+                        data: {json.dumps(text)},
+                        inputType: 'insertText'
+                    }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    
+                    // Verify
+                    return el.value === {json.dumps(text)} ? 'ok' : 'mismatch:' + el.value;
+                }})()
+            """)
+            status = result.get("result", {}).get("value", "")
+            if status == "ok":
+                logger.info(f"wait_and_type_react: typed {len(text)} chars into {selector}")
+                return True
+            elif status.startswith("mismatch"):
+                logger.warning(f"wait_and_type_react: value mismatch: {status}")
+                # Retry — the element exists but value didn't set properly
+                await asyncio.sleep(0.2)
+            else:
+                # Element not found yet — keep polling
+                await asyncio.sleep(0.15)
+        
+        raise CDPError(f"wait_and_type_react timeout: {selector} never appeared")
+
     async def type_text(self, selector: str, text: str, per_char_delay: tuple = (0.03, 0.12)):
         """Type text with human-like per-character timing variance."""
         # Focus the element first
