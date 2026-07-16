@@ -859,12 +859,27 @@ class StealthBrowser:
             await asyncio.sleep(0.3)
         raise CDPError(f"Navigation timeout after {timeout}s")
 
-    async def get_text(self, selector: str) -> Optional[str]:
-        """Get the text content of an element."""
+    async def get_text(self, selector: str, visible_only: bool = False) -> Optional[str]:
+        """Get the text content of an element. If visible_only, skip hidden elements."""
+        vis_check = """
+                if (el) {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    const isVisible = style.display !== 'none' 
+                        && style.visibility !== 'hidden' 
+                        && style.opacity !== '0'
+                        && rect.width > 0 
+                        && rect.height > 0;
+                    if (visible_only && !isVisible) return null;
+                    return el.textContent;
+                }
+                return null;
+"""
         result = await self._evaluate_js(f"""
             (() => {{
                 const el = document.querySelector({json.dumps(selector)});
-                return el ? el.textContent : null;
+                const visible_only = {str(visible_only).lower()};
+                {vis_check}
             }})()
         """)
         return result.get("result", {}).get("value") if result else None
