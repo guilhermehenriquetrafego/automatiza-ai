@@ -297,9 +297,42 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
             await browser.close()
             return cdp_sessions[session_id]
 
-        # Step 8: Click "Continuar" to submit
-        add_step("submit_login", "running", "Enviando formulário de login...")
-        await browser.click("form button")
+        # Step 8: Check if submit button is enabled, then click
+        add_step("submit_login", "running", "Verificando botão de submit...")
+        
+        # Check if the Continuar button is enabled (same as email step)
+        btn_state = await browser._evaluate_js("""
+            (() => {
+                const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                if (!btn) return 'no_btn';
+                return btn.disabled ? 'disabled' : 'enabled';
+            })()
+        """)
+        btn_status = btn_state.get("result", {}).get("value", "")
+        
+        if btn_status == "disabled":
+            # Wait and retry — React might need time to process the password
+            add_step("submit_wait", "running", "Botão disabled — aguardando React processar senha...")
+            await asyncio.sleep(2)
+            btn_state = await browser._evaluate_js("""
+                (() => {
+                    const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                    if (!btn) return 'no_btn';
+                    return btn.disabled ? 'disabled' : 'enabled';
+                })()
+            """)
+            btn_status = btn_state.get("result", {}).get("value", "")
+            if btn_status == "disabled":
+                add_step("submit_error", "error", "Botão Continuar disabled após digitar senha — senha não foi aceita pelo React")
+                cdp_sessions[session_id]["status"] = "error"
+                cdp_sessions[session_id]["current_action"] = "Erro: Botão Continuar disabled após senha"
+                await browser.close()
+                return cdp_sessions[session_id]
+        
+        add_step("submit_login", "success", f"Botão submit {btn_status} — clicando...")
+        
+        # Click the submit button (more specific selector)
+        await browser.click('form button[type="submit"], form button:last-of-type')
 
         # Step 9: Wait for redirect to www.olx.com.br (success indicator)
         add_step("wait_redirect", "running", "Aguardando redirecionamento...")
@@ -308,7 +341,7 @@ async def run_cdp_login(account_id: str, email: str, password: str) -> dict:
 
         try:
             start = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - start < 15.0:
+            while asyncio.get_event_loop().time() - start < 20.0:
                 if hasattr(browser, 'get_current_url'):
                     current_url = await browser.get_current_url()
                     if current_url and "conta.olx.com.br" not in current_url:
