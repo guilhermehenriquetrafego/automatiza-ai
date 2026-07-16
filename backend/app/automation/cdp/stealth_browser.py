@@ -503,32 +503,35 @@ class StealthBrowser:
         """
         Type text into a React controlled input.
         
-        Uses nativeInputValueSetter — the standard way to set values on React
-        controlled inputs. Regular keyboard events don't work because React's
-        synthetic event system requires the native value property to change
-        via the native setter, not via key dispatch.
+        Tries multiple methods in order:
+        1. nativeInputValueSetter + InputEvent (React standard)
+        2. Input.insertText CDP command (browser-level text insertion)
+        3. Character-by-character keyDown with text + nativeInputValueSetter
+        4. Direct React fiber manipulation (last resort)
         """
-        # Method 1: nativeInputValueSetter (most reliable for React)
+        # Method 1: nativeInputValueSetter with InputEvent (not generic Event)
         result = await self._evaluate_js(f"""
             (() => {{
                 const el = document.querySelector({json.dumps(selector)});
                 if (!el) return 'not_found';
                 
-                // Focus the element
                 el.focus();
                 
-                // Use nativeInputValueSetter — this is the ONLY way to
-                // programmatically set a value that React will recognize
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                     window.HTMLInputElement.prototype, 'value'
                 ).set;
                 nativeInputValueSetter.call(el, {json.dumps(text)});
                 
-                // Dispatch the events React listens to
-                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                // Use InputEvent — more specific than generic Event
+                // React's synthetic event system handles InputEvent
+                el.dispatchEvent(new InputEvent('input', {{
+                    bubbles: true,
+                    cancelable: true,
+                    data: {json.dumps(text)},
+                    inputType: 'insertText'
+                }}));
                 el.dispatchEvent(new Event('change', {{ bubbles: true }}));
                 
-                // Verify the value was set
                 return el.value === {json.dumps(text)} ? 'ok' : 'mismatch:' + el.value;
             }})()
         """)
@@ -536,90 +539,159 @@ class StealthBrowser:
         status = result.get("result", {}).get("value", "")
         
         if status == "ok":
-            logger.debug(f"nativeInputValueSetter OK for {selector} ({len(text)} chars)")
-            await self._human_delay()
-            return
-        
-        if status.startswith("not_found"):
+            # Verify React actually processed it by checking if a submit button is enabled
+            await asyncio.sleep(0.5)
+            btn_check = await self._evaluate_js("""
+                (() => {
+                    const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                    if (!btn) return 'no_btn';
+                    return btn.disabled ? 'disabled' : 'enabled';
+                })()
+            """)
+            btn_status = btn_check.get("result", {}).get("value", "")
+            
+            if btn_status == "enabled":
+                logger.debug(f"Method 1 (nativeInputValueSetter+InputEvent) OK — button enabled")
+                await self._human_delay()
+                return
+            elif btn_status == "disabled":
+                logger.debug(f"Method 1 set value but button still disabled — trying method 2")
+            else:
+                logger.debug(f"Method 1 set value (btn check: {btn_status})")
+                await self._human_delay()
+                return
+        elif status.startswith("not_found"):
             raise CDPError(f"Element not found: {selector}")
         
-        # Method 2: Input.insertText (CDP native text insertion)
-        logger.debug(f"nativeInputValueSetter returned '{status}', trying Input.insertText")
+        # Method 2: Input.insertText (CDP native — works like paste)
+        logger.debug("Trying Input.insertText (CDP paste-like)")
         
-        # Click to focus
+        # Click to focus and clear
         await self.click(selector)
         await asyncio.sleep(0.3)
         
-        # Clear existing text
-        await self._cdp.send("Input.dispatchKeyEvent", {{
+        # Select all and delete
+        await self._cdp.send("Input.dispatchKeyEvent", {
             "type": "keyDown",
             "key": "a",
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
             "modifiers": 2,
-        }}, session_id=self._session_id)
-        await self._cdp.send("Input.dispatchKeyEvent", {{
+        }, session_id=self._session_id)
+        await asyncio.sleep(0.05)
+        await self._cdp.send("Input.dispatchKeyEvent", {
             "type": "keyUp",
             "key": "a",
             "code": "KeyA",
             "windowsVirtualKeyCode": 65,
             "modifiers": 2,
-        }}, session_id=self._session_id)
-        await self._cdp.send("Input.dispatchKeyEvent", {{
+        }, session_id=self._session_id)
+        await self._cdp.send("Input.dispatchKeyEvent", {
             "type": "keyDown",
             "key": "Backspace",
             "code": "Backspace",
             "windowsVirtualKeyCode": 8,
-        }}, session_id=self._session_id)
+        }, session_id=self._session_id)
         await asyncio.sleep(0.1)
         
-        # Try Input.insertText (inserts text at cursor position)
+        # Use Input.insertText — inserts text as if typed/pasted
+        # This triggers the browser's native input handling
         try:
-            await self._cdp.send("Input.insertText", {{
+            await self._cdp.send("Input.insertText", {
                 "text": text
-            }}, session_id=self._session_id)
+            }, session_id=self._session_id)
+            await asyncio.sleep(0.3)
             
-            # Dispatch input event to trigger React handler
-            await self._evaluate_js(f"""
-                (() => {{
-                    const el = document.querySelector({json.dumps(selector)});
-                    if (el) {{
-                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }}
-                }})()
+            # Check if button is now enabled
+            btn_check = await self._evaluate_js("""
+                (() => {
+                    const el = document.querySelector('form input');
+                    const btn = document.querySelector('form button[type="submit"], form button:last-of-type');
+                    if (!btn) return 'no_btn';
+                    return btn.disabled ? 'disabled' : 'enabled';
+                })()
             """)
+            btn_status = btn_check.get("result", {}).get("value", "")
             
-            logger.debug(f"Input.insertText OK for {selector} ({len(text)} chars)")
-            await self._human_delay()
-            return
+            if btn_status == "enabled":
+                logger.debug("Method 2 (Input.insertText) OK — button enabled")
+                await self._human_delay()
+                return
+            else:
+                logger.debug(f"Method 2 done but button: {btn_status}")
         except Exception as e:
             logger.warning(f"Input.insertText failed: {e}")
         
-        # Method 3: Character-by-character with nativeInputValueSetter after each char
-        logger.debug("Falling back to char-by-char + nativeInputValueSetter")
+        # Method 3: Char-by-char keyDown with text + dispatch input after each
+        logger.debug("Trying method 3: char-by-char with keyDown text")
         await self.click(selector)
         await asyncio.sleep(0.2)
         
-        accumulated = ""
+        # Clear field first via JS
+        await self._evaluate_js(f"""
+            (() => {{
+                const el = document.querySelector({json.dumps(selector)});
+                if (el) {{
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    setter.call(el, '');
+                    el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'deleteContent' }}));
+                }}
+            }})()
+        """)
+        await asyncio.sleep(0.2)
+        
         for char in text:
-            accumulated += char
+            # Send keyDown with text (this should insert the character)
+            await self._cdp.send("Input.dispatchKeyEvent", {
+                "type": "keyDown",
+                "text": char,
+                "key": char,
+                "unmodifiedText": char,
+            }, session_id=self._session_id)
+            await self._cdp.send("Input.dispatchKeyEvent", {
+                "type": "keyUp",
+                "text": char,
+                "key": char,
+            }, session_id=self._session_id)
+            
+            # Also update via nativeInputValueSetter after each char
+            accumulated = text[:text.index(char) + 1]
             await self._evaluate_js(f"""
                 (() => {{
                     const el = document.querySelector({json.dumps(selector)});
                     if (!el) return;
-                    el.focus();
                     const setter = Object.getOwnPropertyDescriptor(
                         window.HTMLInputElement.prototype, 'value'
                     ).set;
                     setter.call(el, {json.dumps(accumulated)});
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new InputEvent('input', {{
+                        bubbles: true,
+                        data: {json.dumps(char)},
+                        inputType: 'insertText'
+                    }}));
                 }})()
             """)
+            
             delay = self._log_normal_delay(per_char_delay[0], per_char_delay[1])
             await asyncio.sleep(delay)
         
-        logger.debug(f"Char-by-char OK for {selector} ({len(text)} chars)")
+        # Final check
+        verify = await self._evaluate_js(f"""
+            (() => {{
+                const el = document.querySelector({json.dumps(selector)});
+                return el ? el.value : 'not_found';
+            }})()
+        """)
+        final_value = verify.get("result", {}).get("value", "")
+        
+        if final_value == text:
+            logger.debug(f"Method 3 (char-by-char) OK — value verified")
+            await self._human_delay()
+            return
+        
+        logger.warning(f"All methods tried. Final value: {final_value!r} (expected: {text!r})")
         await self._human_delay()
 
     async def accept_cookies(self, timeout: float = 5.0):
